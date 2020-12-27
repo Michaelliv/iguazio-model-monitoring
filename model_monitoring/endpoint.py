@@ -9,7 +9,7 @@ class EndpointKey:
     function: str
     model: str
     tag: str
-    model_class: Optional[str] = None,
+    model_class: Optional[str] = None
     hash: Optional[str] = None
 
     def __post_init__(self):

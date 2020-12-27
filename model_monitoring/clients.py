@@ -6,8 +6,8 @@ from v3io_frames import Client as FramesClient
 from model_monitoring.constants import DEFAULT_CONTAINER
 
 # TODO: Can be done nicer, also this code assumes environment parameters exist for initializing both frames and v3io
-_v3io_client: Optional[V3IOClient, None] = None
-_frames_client: Optional[FramesClient, None] = None
+_v3io_client: Optional[V3IOClient] = None
+_frames_client: Optional[FramesClient] = None
 
 
 def get_frames_client() -> FramesClient:

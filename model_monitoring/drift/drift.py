@@ -1,9 +1,9 @@
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 import pandas as pd
 from sklearn.preprocessing import KBinsDiscretizer
 
-from model_monitoring.measurements import (
+from model_monitoring.drift.measurements import (
     TotalVarianceDistance,
     HellingerDistance,
     KullbackLeiblerDivergence,
@@ -138,7 +138,9 @@ class VirtualDrift:
         }
 
     @staticmethod
-    def to_observations(t, u):
+    def to_observations(
+        t: pd.DataFrame, u: pd.DataFrame
+    ) -> Tuple[pd.Series, pd.Series]:
         t = (
             t.apply(
                 lambda row: f"{'_'.join([str(row[val]) for val in t.columns])}", axis=1
