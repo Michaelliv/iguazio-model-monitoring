@@ -1,8 +1,10 @@
 from dataclasses import asdict
 from datetime import datetime
+from os import environ
 from typing import Dict, Optional, Any, List
 
 import pandas as pd
+from mlrun import mount_v3io
 from mlrun.utils import logger
 
 from model_monitoring.clients import get_frames_client
@@ -19,6 +21,13 @@ class EventBatchProcessor:
         prediction_col: Optional[str],
         label_col: Optional[str],
     ):
+
+        mount_v3io(
+            remote="~/monitoring",
+            mount_path="/v3io",
+            access_key=environ.get("V3IO_ACCESS_KEY"),
+        )
+
         self.virtual_drift = VirtualDrift(
             bin_count, feature_cols, prediction_col, label_col
         )

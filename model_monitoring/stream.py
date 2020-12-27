@@ -1,8 +1,6 @@
 import json
-from datetime import datetime
 from os import environ
-from typing import Dict, List, Any, Set, Tuple, Optional
-from mlrun import mount_v3io
+from typing import Dict, List, Set, Tuple, Optional
 
 from pandas import to_datetime
 from storey import (
@@ -19,7 +17,7 @@ from storey import (
     WriteToParquet,
 )
 from storey.dtypes import SlidingWindows
-from storey.steps import ForEach, Sample, Partition
+from storey.steps import Sample
 
 from model_monitoring.clients import get_v3io_client
 from model_monitoring.constants import ISO_8601
@@ -35,17 +33,8 @@ class ProcessorState:
         self.first_request: Dict[str, str] = dict()
 
 
-def _pass(event):
-    pass
-
-
 class EventStreamProcessor:
     def __init__(self):
-        mount_v3io(
-            remote="~/monitoring",
-            mount_path="/v3io",
-            access_key=environ.get("V3IO_ACCESS_KEY")
-        )
 
         self._kv_keys = [
             "timestamp",
@@ -85,64 +74,63 @@ class EventStreamProcessor:
                 MapWithState(self._state, _process_endpoint_event),
                 FlatMap(unpack_predictions),
                 # Branch 1: Aggregate events, count averages and update TSDB and KV
-                # [
-                #     AggregateByKey(
-                #         aggregates=[
-                #             FieldAggregator(
-                #                 "predictions_per_second",
-                #                 "endpoint_id",
-                #                 ["count"],
-                #                 SlidingWindows(["1s"], "1s"),
-                #             ),
-                #             FieldAggregator(
-                #                 "latency",
-                #                 "latency",
-                #                 ["avg"],
-                #                 SlidingWindows(["1s"], "1s"),
-                #             ),
-                #         ],
-                #         table=Table("notable", NoopDriver()),
-                #     ),
-                #     Sample(10),
-                #     # Branch 1.1: Updated KV
-                #     [
-                #         Map(self.process_before_kv),
-                #         Map(
-                #             lambda e: get_v3io_client().kv.update(
-                #                 container="monitoring",
-                #                 table_path="endpoints",
-                #                 key=e["endpoint_id"],
-                #                 attributes=e,
-                #             )
-                #         ),
-                #     ],
-                #     # Branch 1.2: Update TSDB
-                #     [
-                #         Map(self.process_before_tsdb),
-                #         ForEach(_pass),
-                #         WriteToTSDB(
-                #             path="endpoint_events",
-                #             time_col="timestamp",
-                #             infer_columns_from_data=True,
-                #             index_cols=["endpoint_id"],
-                #             v3io_frames=environ.get("V3IO_FRAMES"),
-                #             access_key=environ.get("V3IO_ACCESS_KEY"),
-                #             container="monitoring",
-                #             rate="1/s",
-                #             max_events=100,  # Every 100 sampled events or
-                #             timeout_secs=60 * 5  # Every 5 minutes
-                #         ),
-                #     ],
-                # ],
+                [
+                    AggregateByKey(
+                        aggregates=[
+                            FieldAggregator(
+                                "predictions_per_second",
+                                "endpoint_id",
+                                ["count"],
+                                SlidingWindows(["1s"], "1s"),
+                            ),
+                            FieldAggregator(
+                                "latency",
+                                "latency",
+                                ["avg"],
+                                SlidingWindows(["1s"], "1s"),
+                            ),
+                        ],
+                        table=Table("notable", NoopDriver()),
+                    ),
+                    Sample(10),
+                    # Branch 1.1: Updated KV
+                    [
+                        Map(self.process_before_kv),
+                        Map(
+                            lambda e: get_v3io_client().kv.update(
+                                container="monitoring",
+                                table_path="endpoints",
+                                key=e["endpoint_id"],
+                                attributes=e,
+                            )
+                        ),
+                    ],
+                    # Branch 1.2: Update TSDB
+                    [
+                        Map(self.process_before_tsdb),
+                        WriteToTSDB(
+                            path="endpoint_events",
+                            time_col="timestamp",
+                            infer_columns_from_data=True,
+                            index_cols=["endpoint_id"],
+                            v3io_frames=environ.get("V3IO_FRAMES"),
+                            access_key=environ.get("V3IO_ACCESS_KEY"),
+                            container="monitoring",
+                            rate="1/s",
+                            max_events=100,  # Every 100 sampled events or
+                            timeout_secs=60 * 5,  # Every 5 minutes
+                        ),
+                    ],
+                ],
                 # Branch 2: Batch events, write to parquet
                 [
                     WriteToParquet(
-                        path="v3io/event_batch",
+                        path="event_batch",
                         partition_cols=["endpoint_id", "timestamp"],
                         # Settings for batching
-                        max_events=100,  # Every 1000 events or
+                        max_events=1000,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
-                        key="endpoint_id"
+                        key="endpoint_id",
                     ),
                 ],
             ]
@@ -223,57 +211,3 @@ def _process_endpoint_event(
     }
 
     return event, state
-
-
-if __name__ == "__main__":
-    from time import sleep
-    from random import randint, choice, uniform
-    from uuid import uuid1
-
-    import string
-    from sklearn.datasets import load_iris
-
-    iris = load_iris()
-    iris_data = iris["data"].tolist()
-    iris_target = iris["target"].tolist()
-
-    def get_random_event(model_details):
-        random_indexes = [randint(0, len(iris_data) - 1) for _ in range(randint(1, 5))]
-        data = [iris_data[i] for i in random_indexes]
-        targets = [iris_target[i] for i in random_indexes]
-
-        return {
-            "class": model_details["class"],
-            "model": model_details["model"],
-            "labels": model_details["labels"],
-            "function_uri": f"{model_details['project']}/{model_details['function']}:{model_details['tag']}",
-            "when": str(datetime.now()),
-            "microsec": randint(10_000, 50_000),
-            "request": {
-                "id": str(uuid1()),
-                "resp": {"outputs": {"inputs": data, "prediction": targets}},
-            },
-        }
-
-    def get_random_endpoint_details() -> Dict[str, Any]:
-        return {
-            "project": "test",
-            "model": f"model_{randint(0, 100)}",
-            "function": f"function_{randint(0, 100)}",
-            "tag": f"v{randint(0, 100)}",
-            "class": "classifier",
-            "labels": [
-                f"{choice(string.ascii_letters)}=={randint(0, 100)}"
-                for _ in range(1, 5)
-            ],
-        }
-
-    esp = EventStreamProcessor()
-
-    endpoints = [get_random_endpoint_details() for i in range(0, 5)]
-
-    while True:
-        for i, endpoint in enumerate(endpoints):
-            event = get_random_event(endpoint)
-            esp._flow.emit(event)
-        sleep(uniform(0.3, 0.6))
