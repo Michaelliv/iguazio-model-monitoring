@@ -1,17 +1,20 @@
 # from dataclasses import asdict
 # from datetime import datetime
 from os import environ
+
 # from typing import Dict, Optional, Any, List
 #
-# import pandas as pd
+import pandas as pd
+
 # from mlrun import mount_v3io
 # from mlrun.utils import logger
 #
 # from .clients import get_frames_client
 # from .constants import ENDPOINT_DRIFT_LOG
-# from .drift import VirtualDrift
+from .drift import VirtualDrift
 # from .endpoint import EndpointKey
 from v3iofs import V3ioFS
+import operator
 
 
 class EventBatchProcessor:
@@ -22,22 +25,24 @@ class EventBatchProcessor:
         # prediction_col: Optional[str],
         # label_col: Optional[str],
     ):
-
-        print("asd")
         self.v3io_fs = V3ioFS(
             v3io_api=environ.get("V3IO_API"),
-            v3io_access_key=environ.get("V3IO_ACCESS_KEY")
+            v3io_access_key=environ.get("V3IO_ACCESS_KEY"),
         )
 
-    def _list_endpoint_dirs(self):
-        try:
-            return self.v3io_fs.listdir("monitoring/endpoint_data")
-        except FileNotFoundError:
-            return None
+    def run(self):
+        for batch_path in self._iter_latest_data():
+            batch = pd.read_parquet(batch_path)
+            VirtualDrift()
 
-    def _list_endpoint_data(self):
+    def _iter_latest_data(self):
         try:
-            return self.v3io_fs.listdir("monitoring/endpoint_data")
+            endpoint_directories = self.v3io_fs.listdir("monitoring/event_batch")
+            for endpoint_directory in endpoint_directories:
+                endpoint_batches = self.v3io_fs.listdir(endpoint_directory["name"])
+                last_created = max(endpoint_batches, key=lambda d: d["mtime"])
+                data = self.v3io_fs.listdir(last_created["name"])
+                yield f"v3io://{data[0]['name']}"
         except FileNotFoundError:
             return None
 
@@ -77,5 +82,5 @@ class EventBatchProcessor:
     #     pass
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     EventBatchProcessor()
