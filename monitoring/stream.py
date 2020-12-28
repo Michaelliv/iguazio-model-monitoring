@@ -16,17 +16,14 @@ from storey import (
     WriteToTSDB,
     WriteToParquet,
     Batch,
-    Event
+    Event,
 )
-
-from storey.steps import ForEach
-
 from storey.dtypes import SlidingWindows
 from storey.steps import Sample
 
-from model_monitoring.clients import get_v3io_client
-from model_monitoring.constants import ISO_8601
-from model_monitoring.utils import (
+from .clients import get_v3io_client
+from .constants import ISO_8601
+from .utils import (
     endpoint_details_from_event,
     endpoint_id_from_details,
 )
@@ -136,7 +133,7 @@ class EventStreamProcessor:
                     ),
                     FlatMap(lambda batch: _mark_batch_timestamp(batch)),
                     WriteToParquet(
-                        path="event_batch",
+                        path="model_monitoring/event_batch",
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         # Settings for batching
                         max_events=1000,  # Every 1000 events or
@@ -220,4 +217,3 @@ def _mark_batch_timestamp(batch: Event):
         for event in batch:
             event["batch_timestamp"] = last_event
     return batch
-

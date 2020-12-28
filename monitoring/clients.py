@@ -3,7 +3,7 @@ from typing import Optional
 from v3io.dataplane import Client as V3IOClient
 from v3io_frames import Client as FramesClient
 
-from model_monitoring.constants import DEFAULT_CONTAINER
+from .constants import DEFAULT_CONTAINER
 
 # TODO: Can be done nicer, also this code assumes environment parameters exist for initializing both frames and v3io
 _v3io_client: Optional[V3IOClient] = None

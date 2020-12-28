@@ -7,10 +7,10 @@ from os import environ
 # from mlrun import mount_v3io
 # from mlrun.utils import logger
 #
-# from model_monitoring.clients import get_frames_client
-# from model_monitoring.constants import ENDPOINT_DRIFT_LOG
-# from model_monitoring.drift import VirtualDrift
-# from model_monitoring.endpoint import EndpointKey
+# from .clients import get_frames_client
+# from .constants import ENDPOINT_DRIFT_LOG
+# from .drift import VirtualDrift
+# from .endpoint import EndpointKey
 from v3iofs import V3ioFS
 
 

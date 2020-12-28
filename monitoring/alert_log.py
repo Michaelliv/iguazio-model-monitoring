@@ -4,16 +4,16 @@ from datetime import datetime
 from typing import Optional
 
 import pandas as pd
+from mlrun.utils import logger
 
-from model_monitoring.clients import get_v3io_client, get_frames_client
-from model_monitoring.constants import (
+from .clients import get_v3io_client, get_frames_client
+from .constants import (
     ISO_8601,
     ENDPOINT_ALERT_LOG_TABLE,
     DEFAULT_CONTAINER,
     ENDPOINT_ALERT_LOG_STREAM,
 )
-from model_monitoring.endpoint import EndpointKey
-from mlrun.utils import logger
+from .endpoint import EndpointKey
 
 
 class AlertLog(ABC):

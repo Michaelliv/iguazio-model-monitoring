@@ -7,7 +7,7 @@ from uuid import uuid1
 
 from sklearn.datasets import load_iris
 
-from model_monitoring.stream import EventStreamProcessor
+from .stream import EventStreamProcessor
 
 if __name__ == "__main__":
 
