@@ -133,7 +133,7 @@ class EventStreamProcessor:
                     ),
                     FlatMap(lambda batch: _mark_batch_timestamp(batch)),
                     WriteToParquet(
-                        path="model_monitoring/event_batch",
+                        path="/v3io/monitoring/event_batch",
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         # Settings for batching
                         max_events=1000,  # Every 1000 events or
