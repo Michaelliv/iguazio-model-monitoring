@@ -19,7 +19,7 @@ from storey import (
     Event,
 )
 from storey.dtypes import SlidingWindows
-from storey.steps import Sample
+from storey.steps import SampleWindow
 
 from .clients import get_v3io_client
 from .constants import ISO_8601
@@ -94,7 +94,7 @@ class EventStreamProcessor:
                         ],
                         table=Table("notable", NoopDriver()),
                     ),
-                    Sample(10),
+                    SampleWindow(10),
                     # Branch 1.1: Updated KV
                     [
                         Map(self.process_before_kv),
