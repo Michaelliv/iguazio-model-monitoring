@@ -127,7 +127,7 @@ class EventStreamProcessor:
                 # Branch 2: Batch events, write to parquet
                 [
                     Batch(
-                        max_events=1000,  # Every 1000 events or
+                        max_events=100,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
                         key="endpoint_id",
                     ),
@@ -136,7 +136,7 @@ class EventStreamProcessor:
                         path="/v3io/monitoring/event_batch",
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         # Settings for batching
-                        max_events=1000,  # Every 1000 events or
+                        max_events=100,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
                         key="endpoint_id",
                     ),
