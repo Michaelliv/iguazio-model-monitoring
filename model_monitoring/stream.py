@@ -15,7 +15,12 @@ from storey import (
     FlatMap,
     WriteToTSDB,
     WriteToParquet,
+    Batch,
+    Event
 )
+
+from storey.steps import ForEach
+
 from storey.dtypes import SlidingWindows
 from storey.steps import Sample
 
@@ -46,7 +51,7 @@ class EventStreamProcessor:
             "endpoint_id",
             "labels",
             "unpacked_labels",
-            "named_features",
+            # "named_features",
             "latency_avg_1s",
             "predictions_per_second_count_1s",
             "first_request",
@@ -124,9 +129,15 @@ class EventStreamProcessor:
                 ],
                 # Branch 2: Batch events, write to parquet
                 [
+                    Batch(
+                        max_events=1000,  # Every 1000 events or
+                        timeout_secs=60 * 5,  # Every 5 minutes
+                        key="endpoint_id",
+                    ),
+                    FlatMap(lambda batch: _mark_batch_timestamp(batch)),
                     WriteToParquet(
                         path="event_batch",
-                        partition_cols=["endpoint_id", "timestamp"],
+                        partition_cols=["endpoint_id", "batch_timestamp"],
                         # Settings for batching
                         max_events=1000,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
@@ -137,16 +148,15 @@ class EventStreamProcessor:
         ).run()
 
     def process_before_kv(self, event: Dict):
-        e = {k: event[k] for k in self._tsdb_keys}
+        e = {k: event[k] for k in self._kv_keys}
         e = {**e, **e.pop("unpacked_labels", {})}
+        e["labels"] = json.dumps(e["labels"])
         return e
 
     def process_before_tsdb(self, event: Dict):
         e = {k: event[k] for k in self._tsdb_keys}
         e = {**e, **e.pop("named_features", {})}
         e["timestamp"] = to_datetime(e["timestamp"], format=ISO_8601)
-        e["labels"] = json.dumps(e["labels"])
-        e["named_features"] = json.dumps(e["named_features"])
         return e
 
 
@@ -176,15 +186,6 @@ def unpack_predictions(event: Dict) -> List[Dict]:
     return predictions
 
 
-def write_to_kv(event: Dict):
-    get_v3io_client().kv.update(
-        container="monitoring",
-        table_path="endpoints",
-        key=event["endpoint_id"],
-        attributes=event,
-    )
-
-
 def _process_endpoint_event(
     event: Dict, state: ProcessorState
 ) -> Tuple[Dict, ProcessorState]:
@@ -211,3 +212,12 @@ def _process_endpoint_event(
     }
 
     return event, state
+
+
+def _mark_batch_timestamp(batch: Event):
+    if batch:
+        last_event = batch[-1]["timestamp"]
+        for event in batch:
+            event["batch_timestamp"] = last_event
+    return batch
+
