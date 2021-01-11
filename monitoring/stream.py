@@ -1,6 +1,6 @@
 import json
 from os import environ
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple
 
 from pandas import to_datetime
 from storey import (
@@ -100,8 +100,8 @@ class EventStreamProcessor:
                         Map(self.process_before_kv),
                         Map(
                             lambda e: get_v3io_client().kv.update(
-                                container="monitoring",
-                                table_path="endpoints",
+                                container="projects",
+                                table_path="monitoring/endpoints",
                                 key=e["endpoint_id"],
                                 attributes=e,
                             )
@@ -111,14 +111,14 @@ class EventStreamProcessor:
                     [
                         Map(self.process_before_tsdb),
                         WriteToTSDB(
-                            path="endpoint_events",
+                            path="monitoring/endpoint_events",
                             time_col="timestamp",
                             infer_columns_from_data=True,
                             index_cols=["endpoint_id"],
                             v3io_frames=environ.get("V3IO_FRAMES"),
                             access_key=environ.get("V3IO_ACCESS_KEY"),
-                            container="monitoring",
-                            rate="1/s",
+                            container="projects",
+                            rate="10/m",
                             max_events=100,  # Every 100 sampled events or
                             timeout_secs=60 * 5,  # Every 5 minutes
                         ),
@@ -127,16 +127,16 @@ class EventStreamProcessor:
                 # Branch 2: Batch events, write to parquet
                 [
                     Batch(
-                        max_events=100,  # Every 1000 events or
+                        max_events=1000,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
                         key="endpoint_id",
                     ),
                     FlatMap(lambda batch: _mark_batch_timestamp(batch)),
                     WriteToParquet(
-                        path="/v3io/monitoring/event_batch",
+                        path="./event_batch",
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         # Settings for batching
-                        max_events=100,  # Every 1000 events or
+                        max_events=1000,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
                         key="endpoint_id",
                     ),
@@ -155,18 +155,6 @@ class EventStreamProcessor:
         e = {**e, **e.pop("named_features", {})}
         e["timestamp"] = to_datetime(e["timestamp"], format=ISO_8601)
         return e
-
-
-def unpack_labels(labels: Optional[List[str]]) -> Dict[str, str]:
-    if not labels:
-        return {}
-
-    unpacked = {}
-    for label in labels:
-        lbl, value = label.split("==")
-        unpacked[f"_{lbl}"] = value
-
-    return unpacked
 
 
 def unpack_predictions(event: Dict) -> List[Dict]:
@@ -194,8 +182,6 @@ def _process_endpoint_event(
         state.active_endpoints.add(endpoint_id)
         state.first_request[endpoint_id] = event["when"]
 
-    unpacked_labels = unpack_labels(event["labels"])
-
     event = {
         "timestamp": event["when"],
         "endpoint_id": endpoint_id,
@@ -204,7 +190,7 @@ def _process_endpoint_event(
         "features": event["request"]["resp"]["outputs"]["inputs"],
         "prediction": event["request"]["resp"]["outputs"]["prediction"],
         "first_request": state.first_request[endpoint_id],
-        "unpacked_labels": unpacked_labels,
+        "unpacked_labels": {f"_{k}": v for k, v in event.get("labels", {}).items()},
         **endpoint_details,
     }
 

@@ -1,4 +1,5 @@
 from typing import Dict, Any
+import hashlib
 
 
 def endpoint_details_from_event(request: Dict) -> Dict[str, Any]:
@@ -23,4 +24,6 @@ def endpoint_details_from_event(request: Dict) -> Dict[str, Any]:
 
 
 def endpoint_id_from_details(details: Dict) -> str:
-    return f"{details['project']}_{details['function']}_{details['model']}_{details['tag']}"
+    endpoint_unique_string = f"{details['function']}_{details['model']}_{details['tag']}"
+    md5 = hashlib.md5(endpoint_unique_string.encode('utf-8')).hexdigest()
+    return f"{details['project']}.{md5}"

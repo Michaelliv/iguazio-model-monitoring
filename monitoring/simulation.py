@@ -7,7 +7,7 @@ from uuid import uuid1
 
 from sklearn.datasets import load_iris
 
-from .stream import EventStreamProcessor
+from monitoring.stream import EventStreamProcessor
 
 if __name__ == "__main__":
 
@@ -40,10 +40,9 @@ if __name__ == "__main__":
             "function": f"function_{randint(0, 100)}",
             "tag": f"v{randint(0, 100)}",
             "class": "classifier",
-            "labels": [
-                f"{choice(string.ascii_letters)}=={randint(0, 100)}"
-                for _ in range(1, 5)
-            ],
+            "labels": {
+                f"{choice(string.ascii_letters)}": randint(0, 100) for _ in range(1, 5)
+            },
         }
 
     esp = EventStreamProcessor()
