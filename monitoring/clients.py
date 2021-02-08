@@ -1,24 +1,26 @@
-from typing import Optional
+from typing import Dict, FrozenSet
 
 from v3io.dataplane import Client as V3IOClient
-from v3io_frames import Client as FramesClient
+from v3io_frames import Client as get_client
+from v3io_frames.client import ClientBase
 
-from .constants import DEFAULT_CONTAINER
-
-# TODO: Can be done nicer, also this code assumes environment parameters exist for initializing both frames and v3io
-_v3io_client: Optional[V3IOClient] = None
-_frames_client: Optional[FramesClient] = None
+_v3io_clients: Dict[FrozenSet, V3IOClient] = {}
+_frames_clients: Dict[FrozenSet, ClientBase] = {}
 
 
-def get_frames_client() -> FramesClient:
-    global _frames_client
-    if _frames_client is None:
-        _frames_client = FramesClient(container=DEFAULT_CONTAINER, should_check_version=False)
-    return _frames_client
+def get_frames_client(**kwargs) -> ClientBase:
+    global _frames_clients
+    kw_set = frozenset(kwargs.items())
+    if kw_set not in _frames_clients:
+        _frames_clients[kw_set] = get_client(**kwargs)
+
+    return _frames_clients[kw_set]
 
 
-def get_v3io_client() -> V3IOClient:
-    global _v3io_client
-    if _v3io_client is None:
-        _v3io_client = V3IOClient()
-    return _v3io_client
+def get_v3io_client(**kwargs) -> V3IOClient:
+    global _v3io_clients
+    kw_set = frozenset(kwargs.items())
+    if kw_set not in _v3io_clients:
+        _v3io_clients[kw_set] = V3IOClient(**kwargs)
+
+    return _v3io_clients[kw_set]

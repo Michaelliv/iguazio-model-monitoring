@@ -1,6 +1,6 @@
 import string
 from datetime import datetime
-from random import randint, choice, uniform
+from random import randint, choice, uniform, choices
 from time import sleep
 from typing import Any, Dict
 from uuid import uuid1
@@ -20,18 +20,25 @@ if __name__ == "__main__":
         data = [iris_data[i] for i in random_indexes]
         targets = [iris_target[i] for i in random_indexes]
 
-        return {
+        is_error = choices([True, False], [0.005, 0.995])
+
+        event = {
             "class": model_details["class"],
             "model": model_details["model"],
             "labels": model_details["labels"],
             "function_uri": f"{model_details['project']}/{model_details['function']}:{model_details['tag']}",
-            "when": str(datetime.now()),
+            "when": str(datetime.utcnow()),
             "microsec": randint(10_000, 50_000),
             "request": {
                 "id": str(uuid1()),
                 "resp": {"outputs": {"inputs": data, "prediction": targets}},
             },
         }
+
+        if is_error:
+            event["error"] = "Simulated Error"
+
+        return event
 
     def get_random_endpoint_details() -> Dict[str, Any]:
         return {
@@ -53,4 +60,4 @@ if __name__ == "__main__":
         for i, endpoint in enumerate(endpoints):
             event = get_random_event(endpoint)
             esp._flow.emit(event)
-        sleep(uniform(0.3, 0.6))
+        sleep(uniform(0.6, 1.2))
