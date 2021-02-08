@@ -1,7 +1,7 @@
 import json
 from collections import defaultdict
 from os import environ
-from typing import Dict, List, Set, Union, Optional, Callable
+from typing import Dict, List, Set, Optional, Callable
 
 import pandas as pd
 import v3io_frames
@@ -239,9 +239,7 @@ class ProcessEndpointEvent(MapClass):
             "first_request": self.first_request[endpoint_id],
             "last_request": self.last_request[endpoint_id],
             "error_count": self.error_count[endpoint_id],
-            "unpacked_labels": {
-                f"_{k}": v for k, v in event.get("labels", {}).items()
-            },
+            "unpacked_labels": {f"_{k}": v for k, v in event.get("labels", {}).items()},
             **endpoint_details,
         }
 
