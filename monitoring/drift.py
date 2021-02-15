@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Tuple
 import pandas as pd
 from sklearn.preprocessing import KBinsDiscretizer
 
-from src.measurements import (
+from monitoring.measurements import (
     TotalVarianceDistance,
     HellingerDistance,
     KullbackLeiblerDivergence,

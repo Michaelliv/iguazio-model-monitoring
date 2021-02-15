@@ -7,11 +7,11 @@ from uuid import uuid1
 import pandas as pd
 from sklearn.datasets import load_iris
 
-from src.stream import EventStreamProcessor
+from monitoring.stream import EventStreamProcessor
 
 if __name__ == "__main__":
 
-    shiba = pd.read_parquet("/src/sample.pq")
+    shiba = pd.read_parquet("/monitoring/sample.pq")
     shiba = shiba.to_dict(orient="records")
 
     iris = load_iris()

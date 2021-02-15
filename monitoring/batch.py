@@ -26,7 +26,7 @@ class EventBatchProcessor:
 
     def _iter_latest_data(self):
         try:
-            endpoint_directories = self.v3io_fs.listdir("src/event_batch")
+            endpoint_directories = self.v3io_fs.listdir("monitoring/event_batch")
             for endpoint_directory in endpoint_directories:
                 endpoint_batches = self.v3io_fs.listdir(endpoint_directory["name"])
                 last_created = max(endpoint_batches, key=lambda d: d["mtime"])
