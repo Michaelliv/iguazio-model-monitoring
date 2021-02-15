@@ -1,4 +1,4 @@
-DEFAULT_CONTAINER = "monitoring"
+DEFAULT_CONTAINER = "src"
 ENDPOINTS_TABLE = "endpoints"
 
 ENDPOINT_EVENT_LOG_TABLE = "endpoint_event_log"

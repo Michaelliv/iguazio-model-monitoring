@@ -4,7 +4,7 @@ from typing import List
 import pandas as pd
 from sklearn import datasets
 
-from monitoring.drift import VirtualDrift
+from src.drift import VirtualDrift
 
 ALPHA_NUM_RE = re.compile("[^0-9a-zA-Z ]+")
 

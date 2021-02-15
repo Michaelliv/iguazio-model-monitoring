@@ -184,8 +184,6 @@ class ProcessEndpointEvent(MapClass):
         self.last_request: Dict[str, str] = dict()
         self.error_count: Dict[str, int] = defaultdict(int)
 
-        self.error_paths = set()
-
     def do(self, event: dict):
         endpoint_details = endpoint_details_from_event(event)
         endpoint_id = endpoint_id_from_details(endpoint_details)
