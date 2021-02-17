@@ -13,12 +13,15 @@ class ModelmonitoringFunction:
             project="projects",
             filename="model_monitoring.py",
             kind="nuclio",
+            image="mlrun/mlrun"
         )
 
         fn.spec.build.commands = [
             "pip install git+https://github.com/Michaelliv/iguazio-model-monitoring.git",
             "pip install v3io_frames",
             "pip install v3io-py",
+            "pip uninstall nuclio --yes",
+            "pip install nuclio-jupyter"
         ]
 
         fn.set_envs(
