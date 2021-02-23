@@ -31,7 +31,6 @@ from .utils import (
 
 class EventStreamProcessor:
     def __init__(self):
-
         self._kv_keys = [
             "timestamp",
             "project",
@@ -133,17 +132,19 @@ class EventStreamProcessor:
                         key="endpoint_id",
                     ),
                     FlatMap(lambda batch: _mark_batch_timestamp(batch)),
-                    WriteToParquet(
-                        path="./event_batch",
-                        partition_cols=["endpoint_id", "batch_timestamp"],
-                        # Settings for batching
-                        max_events=1000,  # Every 1000 events or
-                        timeout_secs=60 * 5,  # Every 5 minutes
-                        key="endpoint_id",
-                    ),
+                    # WriteToParquet(
+                    #     path="./event_batch",
+                    #     partition_cols=["endpoint_id", "batch_timestamp"],
+                    #     # Settings for batching
+                    #     max_events=1000,  # Every 1000 events or
+                    #     timeout_secs=60 * 5,  # Every 5 minutes
+                    # ),
                 ],
             ]
         ).run()
+
+    def consume(self, event: Dict):
+        self._flow.emit(event)
 
     @staticmethod
     def unpack_predictions(event: Dict) -> List[Dict]:
