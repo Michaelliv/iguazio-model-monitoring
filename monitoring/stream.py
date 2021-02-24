@@ -1,7 +1,10 @@
+import asyncio
 import json
+import os
 from collections import defaultdict
+from functools import partial
 from os import environ
-from typing import Dict, List, Set, Optional, Callable
+from typing import Dict, List, Set, Optional, Callable, Union
 
 import pandas as pd
 import v3io_frames
@@ -20,6 +23,7 @@ from storey import (
 )
 from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
+from storey.utils import url_to_file_system
 
 from .clients import get_v3io_client, get_frames_client
 from .constants import ISO_8601
@@ -30,7 +34,9 @@ from .utils import (
 
 
 class EventStreamProcessor:
-    def __init__(self):
+    def __init__(self, parquet_path_template: str):
+        self.parquet_path_template = parquet_path_template
+
         self._kv_keys = [
             "timestamp",
             "project",
@@ -127,18 +133,19 @@ class EventStreamProcessor:
                 # Branch 2: Batch events, write to parquet
                 [
                     Batch(
-                        max_events=1000,  # Every 1000 events or
+                        max_events=10,  # Every 1000 events or
                         timeout_secs=60 * 5,  # Every 5 minutes
                         key="endpoint_id",
                     ),
                     FlatMap(lambda batch: _mark_batch_timestamp(batch)),
-                    # WriteToParquet(
-                    #     path="./event_batch",
-                    #     partition_cols=["endpoint_id", "batch_timestamp"],
-                    #     # Settings for batching
-                    #     max_events=1000,  # Every 1000 events or
-                    #     timeout_secs=60 * 5,  # Every 5 minutes
-                    # ),
+                    UpdateParquet(
+                        path_template=self.parquet_path_template,
+                        partition_cols=["endpoint_id", "batch_timestamp"],
+                        # Settings for _Batching
+                        max_events=10,  # Every 1000 events or
+                        timeout_secs=60 * 5,  # Every 5 minutes
+                        key="endpoint_id",
+                    ),
                 ],
             ]
         ).run()
@@ -348,6 +355,58 @@ class InferSchema(MapClass):
                     address=environ.get("V3IO_FRAMESD"),
                 ).execute(backend="kv", table=key, command="infer_schema")
         return event
+
+
+class UpdateParquet(WriteToParquet):
+    def __init__(
+        self,
+        path_template: str,
+        index_cols: Union[str, List[str], None] = None,
+        columns: Union[str, List[str], None] = None,
+        partition_cols: Optional[List[str]] = None,
+        infer_columns_from_data: Optional[bool] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            "", index_cols, columns, partition_cols, infer_columns_from_data, **kwargs
+        )
+
+        self.path_template = path_template
+        self.projects = set()
+
+    def _makedirs_by_path(self, path):
+        fs, file_path = url_to_file_system(path, self._storage_options)
+        dirname = os.path.dirname(path)
+        if dirname:
+            fs.makedirs(dirname, exist_ok=True)
+
+    async def _emit(self, batch, batch_time):
+        partition_by_project = defaultdict(list)
+        for event in batch:
+            project = event[1].split(".")[0]
+            partition_by_project[project].append(event)
+
+        for project, events in partition_by_project.items():
+            path = self.path_template.format(project=project)
+            if project not in self.projects:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, partial(self._makedirs_by_path, path=path),
+                )
+            self.projects.add(project)
+
+            df_columns = []
+            if self._index_cols:
+                df_columns.extend(self._index_cols)
+            df_columns.extend(self._columns)
+            df = pd.DataFrame(batch, columns=df_columns)
+            if self._index_cols:
+                df.set_index(self._index_cols, inplace=True)
+            df.to_parquet(
+                path=path,
+                index=bool(self._index_cols),
+                partition_cols=self._partition_cols,
+                storage_options=self._storage_options,
+            )
 
 
 def _mark_batch_timestamp(batch: List[dict]):
