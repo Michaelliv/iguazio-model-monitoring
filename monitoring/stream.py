@@ -108,7 +108,7 @@ class EventStreamProcessor:
                     # Branch 1.2: Update TSDB
                     [
                         Map(self.process_before_events_tsdb),
-                        Batch(max_events=100, timeout_secs=60 * 5),
+                        Batch(max_events=500, timeout_secs=60 * 5),
                         UpdateTSDB(
                             path_builder=lambda e: f"{e[-1]['project']}/endpoint-events",
                             tsdb_columns=self._events_tsdb_keys,
@@ -118,7 +118,7 @@ class EventStreamProcessor:
                     [
                         Map(self.process_before_features_tsdb),
                         Batch(
-                            max_events=10,
+                            max_events=500,
                             timeout_secs=60 * 5,
                             key=lambda e: e.body["endpoint_id"],
                         ),
@@ -133,7 +133,7 @@ class EventStreamProcessor:
                 # Branch 2: Batch events, write to parquet
                 [
                     Batch(
-                        max_events=10,  # Every 1000 events or
+                        max_events=10_000,  # Every 1000 events or
                         timeout_secs=60 * 60,  # Every 1 hour
                         key="endpoint_id",
                     ),
@@ -143,7 +143,7 @@ class EventStreamProcessor:
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         infer_columns_from_data=True,
                         # Settings for _Batching
-                        max_events=10,  # Every 1000 events or
+                        max_events=10_000,  # Every 1000 events or
                         timeout_secs=60 * 60,  # Every 1 hour
                         key="endpoint_id",
                     ),
