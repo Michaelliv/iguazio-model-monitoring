@@ -102,8 +102,8 @@ class EventStreamProcessor:
                     # Branch 1.1: Updated KV
                     [
                         Map(self.process_before_kv),
-                        UpdateKV(lambda e: f"{e['project']}/model-endpoints"),
-                        InferSchema(lambda e: f"{e['project']}/model-endpoints"),
+                        UpdateKV("{project}/model-endpoints"),
+                        InferSchema("{project}/model-endpoints"),
                     ],
                     # Branch 1.2: Update TSDB
                     [
@@ -134,7 +134,7 @@ class EventStreamProcessor:
                 [
                     Batch(
                         max_events=10,  # Every 1000 events or
-                        timeout_secs=60 * 5,  # Every 5 minutes
+                        timeout_secs=60 * 60,  # Every 1 hour
                         key="endpoint_id",
                     ),
                     FlatMap(lambda batch: _mark_batch_timestamp(batch)),
@@ -143,7 +143,7 @@ class EventStreamProcessor:
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         # Settings for _Batching
                         max_events=10,  # Every 1000 events or
-                        timeout_secs=60 * 5,  # Every 5 minutes
+                        timeout_secs=60 * 60,  # Every 1 hour
                         key="endpoint_id",
                     ),
                 ],
@@ -253,12 +253,12 @@ class ProcessEndpointEvent(MapClass):
 
 
 class UpdateKV(MapClass):
-    def __init__(self, path, **kwargs):
+    def __init__(self, path_template: str, **kwargs):
         super().__init__(**kwargs)
-        self.path_getter = path
+        self.path_template = path_template
 
     def do(self, event: Dict):
-        path = self.path_getter(event)
+        path = self.path_template.format(**event)
         get_v3io_client().kv.update(
             container="projects",
             table_path=path,
@@ -331,29 +331,29 @@ class UpdateTSDB(MapClass):
 
 
 class InferSchema(MapClass):
-    def __init__(self, key_generator, **kwargs):
+    def __init__(self, path_template: str, **kwargs):
         super().__init__(**kwargs)
-        self.key_generator = key_generator
+        self.path_template = path_template
         self.inferred = {}
 
     def do(self, event: Dict):
-        key = self.key_generator(event)
+        path = self.path_template.format(**event)
         key_set = set(event.keys())
-        if key not in self.inferred:
-            self.inferred[key] = key_set
+        if path not in self.inferred:
+            self.inferred[path] = key_set
             get_frames_client(
                 token=environ.get("V3IO_ACCESS_KEY"),
                 container="projects",
                 address=environ.get("V3IO_FRAMESD"),
-            ).execute(backend="kv", table=key, command="infer_schema")
+            ).execute(backend="kv", table=path, command="infer_schema")
         else:
-            if not key_set.issubset(self.inferred[key]):
-                self.inferred[key] = self.inferred[key].union(key_set)
+            if not key_set.issubset(self.inferred[path]):
+                self.inferred[path] = self.inferred[path].union(key_set)
                 get_frames_client(
                     token=environ.get("V3IO_ACCESS_KEY"),
                     container="projects",
                     address=environ.get("V3IO_FRAMESD"),
-                ).execute(backend="kv", table=key, command="infer_schema")
+                ).execute(backend="kv", table=path, command="infer_schema")
         return event
 
 
