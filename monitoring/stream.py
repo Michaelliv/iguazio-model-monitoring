@@ -137,10 +137,11 @@ class EventStreamProcessor:
                         timeout_secs=60 * 60,  # Every 1 hour
                         key="endpoint_id",
                     ),
-                    FlatMap(lambda batch: _mark_batch_timestamp(batch)),
+                    FlatMap(lambda batch: _process_before_parquet(batch)),
                     UpdateParquet(
                         path_template=self.parquet_path_template,
                         partition_cols=["endpoint_id", "batch_timestamp"],
+                        infer_columns_from_data=True,
                         # Settings for _Batching
                         max_events=10,  # Every 1000 events or
                         timeout_secs=60 * 60,  # Every 1 hour
@@ -409,9 +410,11 @@ class UpdateParquet(WriteToParquet):
             )
 
 
-def _mark_batch_timestamp(batch: List[dict]):
+def _process_before_parquet(batch: List[dict]):
     if batch:
         last_event = batch[-1]["timestamp"]
         for event in batch:
             event["batch_timestamp"] = last_event
+            if not event["unpacked_labels"]:
+                event["unpacked_labels"] = None
     return batch
