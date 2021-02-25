@@ -316,7 +316,7 @@ class UpdateTSDB(MapClass):
             raise RuntimeError("Failed to get tsdb columns")
 
         df = pd.DataFrame(event, columns=columns)
-        df.set_index(keys=["timestamp", "endpoint_id"], inplace=True)
+        df.set_index(keys=["timestamp", "endpoint_id"], inplace=True, drop=False)
 
         if path not in self.projects:
             self.projects.add(path)
