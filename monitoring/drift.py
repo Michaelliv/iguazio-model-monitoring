@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Optional, List, Dict
 
 import numpy as np
@@ -27,9 +28,9 @@ class VirtualDrift:
         self.capping = inf_capping
         self.discretizers: Dict[str, KBinsDiscretizer] = {}
         self.metrics = {
-            "TVD": TotalVarianceDistance,
-            "Hellinger": HellingerDistance,
-            "KLD": KullbackLeiblerDivergence,
+            "tvd": TotalVarianceDistance,
+            "hellinger": HellingerDistance,
+            "kld": KullbackLeiblerDivergence,
         }
 
     def yaml_to_histogram(self, histogram_yaml):
@@ -102,37 +103,34 @@ class VirtualDrift:
                     feature_values, self.feature_weights
                 )
 
-        result_drift = {
-            f"{feature}_{metric}": value
-            for metric in features_drift_measures.keys()
-            for feature, value in features_drift_measures[metric].items()
-        }
+        drift_result = defaultdict(dict)
+
+        for feature in base_features:
+            for metric, values in features_drift_measures.items():
+                drift_result[feature][metric] = values[feature]
+                sum = features_drift_measures[metric]["total_sum"]
+                mean = features_drift_measures[metric]["total_mean"]
+                drift_result[f"{metric}_sum"] = sum
+                drift_result[f"{metric}_mean"] = mean
+                if self.feature_weights:
+                    metric_measure = features_drift_measures[metric]
+                    weighted_mean = metric_measure["total_weighted_mean"]
+                    drift_result[f"{metric}_weighted_mean"] = weighted_mean
 
         if self.label_col:
             label_drift_measures = self.compute_metrics_over_df(
                 base_histogram.loc[:, self.label_col],
                 latest_histogram.loc[:, self.label_col],
             )
-            result_drift.update(
-                {
-                    f"{self.label_col}_{metric}": label_drift_measures[metric][
-                        self.label_col
-                    ]
-                    for metric in label_drift_measures.keys()
-                }
-            )
+            for metric, values in label_drift_measures.items():
+                drift_result[self.label_col][metric] = values[metric]
+
         if self.prediction_col:
             prediction_drift_measures = self.compute_metrics_over_df(
                 base_histogram.loc[:, self.prediction_col],
                 latest_histogram.loc[:, self.prediction_col],
             )
-            result_drift.update(
-                {
-                    f"{self.prediction_col}_{metric}": prediction_drift_measures[
-                        metric
-                    ][self.prediction_col]
-                    for metric in prediction_drift_measures.keys()
-                }
-            )
+            for metric, values in prediction_drift_measures.items():
+                drift_result[self.prediction_col][metric] = values[metric]
 
-        return result_drift
+        return drift_result
