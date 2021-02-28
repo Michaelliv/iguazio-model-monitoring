@@ -3,7 +3,6 @@ import json
 import os
 from collections import defaultdict
 from functools import partial
-from os import environ
 from typing import Dict, List, Set, Optional, Callable, Union
 
 import pandas as pd
@@ -25,8 +24,8 @@ from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
 from storey.utils import url_to_file_system
 
+from monitoring.config import config
 from .clients import get_v3io_client, get_frames_client
-from .constants import ISO_8601
 from .utils import (
     endpoint_details_from_event,
     endpoint_id_from_details,
@@ -34,8 +33,7 @@ from .utils import (
 
 
 class EventStreamProcessor:
-    def __init__(self, parquet_path_template: str):
-        self.parquet_path_template = parquet_path_template
+    def __init__(self):
 
         self._kv_keys = [
             "timestamp",
@@ -98,19 +96,22 @@ class EventStreamProcessor:
                         ],
                         table=Table("notable", NoopDriver()),
                     ),
-                    SampleWindow(10),
+                    SampleWindow(config.get_int("SAMPLE_WINDOW")),
                     # Branch 1.1: Updated KV
                     [
                         Map(self.process_before_kv),
-                        UpdateKV("{project}/model-endpoints"),
-                        InferSchema("{project}/model-endpoints"),
+                        UpdateKV(config.get("KV_PATH_TEMPLATE")),
+                        InferSchema(config.get("KV_PATH_TEMPLATE")),
                     ],
                     # Branch 1.2: Update TSDB
                     [
                         Map(self.process_before_events_tsdb),
-                        Batch(max_events=10, timeout_secs=60 * 5),
+                        Batch(
+                            max_events=config.get_int("TSDB_BATCHING_MAX_EVENTS"),
+                            timeout_secs=config.get_int("TSDB_BATCHING_TIMEOUT_SECS"),
+                        ),
                         UpdateTSDB(
-                            path_builder=lambda e: f"{e[-1]['project']}/endpoint-events",
+                            path_builder=lambda e: f"{e[-1]['project']}/model-endpoints/events",
                             tsdb_columns=self._events_tsdb_keys,
                             rate="10/m",
                         ),
@@ -118,12 +119,12 @@ class EventStreamProcessor:
                     [
                         Map(self.process_before_features_tsdb),
                         Batch(
-                            max_events=10,
-                            timeout_secs=60 * 5,
+                            max_events=config.get_int("TSDB_BATCHING_MAX_EVENTS"),
+                            timeout_secs=config.get_int("TSDB_BATCHING_TIMEOUT_SECS"),
                             key=lambda e: e.body["endpoint_id"],
                         ),
                         UpdateTSDB(
-                            path_builder=lambda e: f"{e[-1]['project']}/endpoint-features",
+                            path_builder=lambda e: f"{e[-1]['project']}/model-endpoints/features",
                             rate="10/m",
                             infer_columns=True,
                             exclude_columns={"project"},
@@ -133,18 +134,18 @@ class EventStreamProcessor:
                 # Branch 2: Batch events, write to parquet
                 [
                     Batch(
-                        max_events=10_000,  # Every 1000 events or
-                        timeout_secs=60 * 60,  # Every 1 hour
+                        max_events=config.get_int("PARQUET_BATCHING_MAX_EVENTS"),
+                        timeout_secs=config.get_int("PARQUET_BATCHING_TIMEOUT_SECS"),
                         key="endpoint_id",
                     ),
                     FlatMap(lambda batch: _process_before_parquet(batch)),
                     UpdateParquet(
-                        path_template=self.parquet_path_template,
+                        path_template=config.get("PARQUET_PATH_TEMPLATE"),
                         partition_cols=["endpoint_id", "batch_timestamp"],
                         infer_columns_from_data=True,
                         # Settings for _Batching
-                        max_events=10_000,  # Every 1000 events or
-                        timeout_secs=60 * 60,  # Every 1 hour
+                        max_events=config.get_int("PARQUET_BATCHING_MAX_EVENTS"),
+                        timeout_secs=config.get_int("PARQUET_BATCHING_TIMEOUT_SECS"),
                         key="endpoint_id",
                     ),
                 ],
@@ -176,13 +177,17 @@ class EventStreamProcessor:
 
     def process_before_events_tsdb(self, event: Dict):
         e = {k: event[k] for k in self._events_tsdb_keys}
-        e["timestamp"] = pd.to_datetime(e["timestamp"], format=ISO_8601)
+        e["timestamp"] = pd.to_datetime(
+            e["timestamp"], format=config.get("TIME_FORMAT")
+        )
         return e
 
     def process_before_features_tsdb(self, event: Dict):
         e = {k: event[k] for k in self._features_tsdb_keys}
         e = {**e, **e.pop("named_features", {})}
-        e["timestamp"] = pd.to_datetime(e["timestamp"], format=ISO_8601)
+        e["timestamp"] = pd.to_datetime(
+            e["timestamp"], format=config.get("TIME_FORMAT")
+        )
         return e
 
 
@@ -203,9 +208,9 @@ class ProcessEndpointEvent(MapClass):
         #     try:
         #         self.error_count[endpoint_id] += 1
         #         client = get_frames_client(
-        #             token=environ.get("V3IO_ACCESS_KEY"),
-        #             container="projects",
-        #             address=environ.get("V3IO_FRAMESD"),
+        #             config.get("V3IO_ACCESS_KEY"),
+        #             container=config.get("CONTAINER"),
+        #             address=config.get("V3IO_FRAMESD"),
         #         )
         #
         #         ts_error = {
@@ -261,7 +266,7 @@ class UpdateKV(MapClass):
     def do(self, event: Dict):
         path = self.path_template.format(**event)
         get_v3io_client().kv.update(
-            container="projects",
+            container=config.get("CONTAINER"),
             table_path=path,
             key=event["endpoint_id"],
             attributes=event,
@@ -294,9 +299,9 @@ class UpdateTSDB(MapClass):
         path = self.path_builder(event)
 
         client = get_frames_client(
-            token=environ.get("V3IO_ACCESS_KEY"),
-            container="projects",
-            address=environ.get("V3IO_FRAMESD"),
+            token=config.get("V3IO_ACCESS_KEY"),
+            container=config.get("CONTAINER"),
+            address=config.get("V3IO_FRAMESD"),
         )
 
         if self.exclude_columns:
@@ -343,17 +348,17 @@ class InferSchema(MapClass):
         if path not in self.inferred:
             self.inferred[path] = key_set
             get_frames_client(
-                token=environ.get("V3IO_ACCESS_KEY"),
-                container="projects",
-                address=environ.get("V3IO_FRAMESD"),
+                token=config.get("V3IO_ACCESS_KEY"),
+                container=config.get("CONTAINER"),
+                address=config.get("V3IO_FRAMESD"),
             ).execute(backend="kv", table=path, command="infer_schema")
         else:
             if not key_set.issubset(self.inferred[path]):
                 self.inferred[path] = self.inferred[path].union(key_set)
                 get_frames_client(
-                    token=environ.get("V3IO_ACCESS_KEY"),
-                    container="projects",
-                    address=environ.get("V3IO_FRAMESD"),
+                    token=config.get("V3IO_ACCESS_KEY"),
+                    container=config.get("CONTAINER"),
+                    address=config.get("V3IO_FRAMESD"),
                 ).execute(backend="kv", table=path, command="infer_schema")
         return event
 

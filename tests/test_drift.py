@@ -1,13 +1,12 @@
 import yaml
 from monitoring import drift
 
-
 class TestVirtualDrift:
 
     # Get histogram file
-    with open("tests/model_hist_v1.yaml", "r") as f:
+    with open("model_hist_v1.yaml", "r") as f:
         base_histogram = yaml.safe_load(f)
-    with open("tests/model_hist_v2.yaml", "r") as f:
+    with open("model_hist_v2.yaml", "r") as f:
         latest_histogram = yaml.safe_load(f)
 
     def test_vd_same_histogram(self):

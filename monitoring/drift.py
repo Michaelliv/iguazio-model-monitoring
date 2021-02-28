@@ -1,6 +1,8 @@
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 
+import numpy as np
 import pandas as pd
+from mlrun.data_types.infer import DFDataInfer, InferOptions
 from sklearn.preprocessing import KBinsDiscretizer
 
 from monitoring.measurements import (
@@ -8,8 +10,6 @@ from monitoring.measurements import (
     HellingerDistance,
     KullbackLeiblerDivergence,
 )
-
-import numpy as np
 
 
 class VirtualDrift:
@@ -60,6 +60,16 @@ class VirtualDrift:
             }
         return drift_measures
 
+    def compute_drift_from_histogram_and_df(self, base_histogram, latest_parquet_path):
+        df = pd.read_parquet(latest_parquet_path)
+        df = list(df["named_features"])
+        df = pd.DataFrame(df)
+        latest_stats = DFDataInfer.get_stats(df, InferOptions.Histogram)
+        latest_stats = {"feature_stats": latest_stats}
+
+        result_drift = self.compute_drift_from_histograms(base_histogram, latest_stats)
+        return result_drift
+
     def compute_drift_from_histograms(self, base_histogram_yaml, latest_histogram_yaml):
 
         # Process histogram yamls to Dataframe of the histograms
@@ -92,7 +102,7 @@ class VirtualDrift:
                     feature_values, self.feature_weights
                 )
 
-        result_dift = {
+        result_drift = {
             f"{feature}_{metric}": value
             for metric in features_drift_measures.keys()
             for feature, value in features_drift_measures[metric].items()
@@ -103,7 +113,7 @@ class VirtualDrift:
                 base_histogram.loc[:, self.label_col],
                 latest_histogram.loc[:, self.label_col],
             )
-            result_dift.update(
+            result_drift.update(
                 {
                     f"{self.label_col}_{metric}": label_drift_measures[metric][
                         self.label_col
@@ -116,7 +126,7 @@ class VirtualDrift:
                 base_histogram.loc[:, self.prediction_col],
                 latest_histogram.loc[:, self.prediction_col],
             )
-            result_dift.update(
+            result_drift.update(
                 {
                     f"{self.prediction_col}_{metric}": prediction_drift_measures[
                         metric
@@ -125,4 +135,4 @@ class VirtualDrift:
                 }
             )
 
-        return result_dift
+        return result_drift
