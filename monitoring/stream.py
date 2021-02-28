@@ -108,7 +108,7 @@ class EventStreamProcessor:
                     # Branch 1.2: Update TSDB
                     [
                         Map(self.process_before_events_tsdb),
-                        Batch(max_events=500, timeout_secs=60 * 5),
+                        Batch(max_events=10, timeout_secs=60 * 5),
                         UpdateTSDB(
                             path_builder=lambda e: f"{e[-1]['project']}/endpoint-events",
                             tsdb_columns=self._events_tsdb_keys,
@@ -118,7 +118,7 @@ class EventStreamProcessor:
                     [
                         Map(self.process_before_features_tsdb),
                         Batch(
-                            max_events=500,
+                            max_events=10,
                             timeout_secs=60 * 5,
                             key=lambda e: e.body["endpoint_id"],
                         ),
@@ -176,13 +176,13 @@ class EventStreamProcessor:
 
     def process_before_events_tsdb(self, event: Dict):
         e = {k: event[k] for k in self._events_tsdb_keys}
-        e["timestamp"] = pd.to_datetime(e["timestamp"], format=ISO_8601, utc=True)
+        e["timestamp"] = pd.to_datetime(e["timestamp"], format=ISO_8601)
         return e
 
     def process_before_features_tsdb(self, event: Dict):
         e = {k: event[k] for k in self._features_tsdb_keys}
         e = {**e, **e.pop("named_features", {})}
-        e["timestamp"] = pd.to_datetime(e["timestamp"], format=ISO_8601, utc=True)
+        e["timestamp"] = pd.to_datetime(e["timestamp"], format=ISO_8601)
         return e
 
 
