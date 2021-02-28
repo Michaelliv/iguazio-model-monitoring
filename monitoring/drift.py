@@ -134,3 +134,12 @@ class VirtualDrift:
                 drift_result[self.prediction_col][metric] = values[metric]
 
         return drift_result
+
+    @staticmethod
+    def parquet_to_stats(parquet_path: str):
+        df = pd.read_parquet(parquet_path)
+        df = list(df["named_features"])
+        df = pd.DataFrame(df)
+        latest_stats = DFDataInfer.get_stats(df, InferOptions.Histogram)
+        latest_stats = {"feature_stats": latest_stats}
+        return latest_stats
