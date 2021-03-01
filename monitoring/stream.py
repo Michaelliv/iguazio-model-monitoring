@@ -264,10 +264,9 @@ class MapFeatureNames(MapClass):
 
     def do(self, event: Dict):
         if event["endpoint_id"] not in self.feature_names:
-
             endpoint_record = get_v3io_client().kv.get(
                 container=config.get("CONTAINER"),
-                table_path=config.get("KV_PATH_TEMPLATE").format(event),
+                table_path=config.get("KV_PATH_TEMPLATE").format(**event),
                 key=event["endpoint_id"]
             )
 
