@@ -264,11 +264,11 @@ class MapFeatureNames(MapClass):
 
     def do(self, event: Dict):
         if event["endpoint_id"] not in self.feature_names:
-            endpoint_record = get_endpoint_kv_record_by_id(
-                access_key=config.get("V3IO_ACCESS_KEY"),
-                project=event["project"],
-                endpoint_id=event["endpoint_id"],
-                attribute_names=["model_artifact"],
+
+            endpoint_record = get_v3io_client().kv.get(
+                container=config.get("CONTAINER"),
+                table_path=config.get("KV_PATH_TEMPLATE").format(event),
+                key=event["endpoint_id"]
             )
 
             logger.info(f"Grabbing {event['endpoint_id']} artifact data {endpoint_record}")
