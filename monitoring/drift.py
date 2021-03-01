@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pathlib import Path
 from typing import Optional, List, Dict
 
 import numpy as np
@@ -36,7 +37,7 @@ class VirtualDrift:
     def yaml_to_histogram(self, histogram_yaml):
         histograms = {
             feature: feature_stats["hist"][0]
-            for feature, feature_stats in histogram_yaml["feature_stats"].items()
+            for feature, feature_stats in histogram_yaml.items()
         }
         # Get features value counts
         histograms = pd.concat(
@@ -60,16 +61,6 @@ class VirtualDrift:
                 for feature in base_histogram
             }
         return drift_measures
-
-    def compute_drift_from_histogram_and_df(self, base_histogram, latest_parquet_path):
-        df = pd.read_parquet(latest_parquet_path)
-        df = list(df["named_features"])
-        df = pd.DataFrame(df)
-        latest_stats = DFDataInfer.get_stats(df, InferOptions.Histogram)
-        latest_stats = {"feature_stats": latest_stats}
-
-        result_drift = self.compute_drift_from_histograms(base_histogram, latest_stats)
-        return result_drift
 
     def compute_drift_from_histograms(self, base_histogram_yaml, latest_histogram_yaml):
 
@@ -136,10 +127,9 @@ class VirtualDrift:
         return drift_result
 
     @staticmethod
-    def parquet_to_stats(parquet_path: str):
+    def parquet_to_stats(parquet_path: Path):
         df = pd.read_parquet(parquet_path)
         df = list(df["named_features"])
         df = pd.DataFrame(df)
         latest_stats = DFDataInfer.get_stats(df, InferOptions.Histogram)
-        latest_stats = {"feature_stats": latest_stats}
         return latest_stats
