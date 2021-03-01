@@ -11,7 +11,7 @@ def endpoint_details_from_event(request: Dict) -> Dict[str, Any]:
         function, tag = function_with_tag, "latest"
 
     model = request["model"]
-    model_class = request.get("class")
+    model_class = request.get("model_class") or request.get("class")
 
     return {
         "project": project,

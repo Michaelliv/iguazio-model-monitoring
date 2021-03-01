@@ -7,6 +7,10 @@ from typing import Dict, List, Set, Optional, Callable, Union
 
 import pandas as pd
 import v3io_frames
+from mlrun.api.crud.model_endpoints import get_endpoint_kv_record_by_id
+from mlrun.artifacts import get_model
+from mlrun.utils import logger
+from mlrun.utils.v3io_clients import get_v3io_client, get_frames_client
 from storey import (
     FieldAggregator,
     NoopDriver,
@@ -25,7 +29,6 @@ from storey.steps import SampleWindow
 from storey.utils import url_to_file_system
 
 from monitoring.config import config
-from .clients import get_v3io_client, get_frames_client
 from .utils import (
     endpoint_details_from_event,
     endpoint_id_from_details,
@@ -77,6 +80,7 @@ class EventStreamProcessor:
                 Source(),
                 ProcessEndpointEvent(),
                 FlatMap(self.unpack_predictions),
+                MapFeatureNames(),
                 # Branch 1: Aggregate events, count averages and update TSDB and KV
                 [
                     AggregateByKey(
@@ -159,14 +163,7 @@ class EventStreamProcessor:
     def unpack_predictions(event: Dict) -> List[Dict]:
         predictions = []
         for features, prediction in zip(event["features"], event["prediction"]):
-            predictions.append(
-                dict(
-                    event,
-                    features=features,
-                    prediction=prediction,
-                    named_features={f"f{i}": value for i, value in enumerate(features)},
-                )
-            )
+            predictions.append(dict(event, features=features, prediction=prediction))
         return predictions
 
     def process_before_kv(self, event: Dict):
@@ -256,6 +253,46 @@ class ProcessEndpointEvent(MapClass):
         }
 
         return event
+
+
+class MapFeatureNames(MapClass):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.feature_names = {}
+
+    def do(self, event: Dict):
+        if event["endpoint_id"] not in self.feature_names:
+            endpoint_record = get_endpoint_kv_record_by_id(
+                access_key=config.get("V3IO_ACCESS_KEY"),
+                project=event["project"],
+                endpoint_id=event["endpoint_id"],
+                attribute_names=["model_artifact"],
+            )
+
+            if "model_artifact" not in endpoint_record:
+                logger.error(
+                    f"Endpoint {event['endpoint_id']} was not registered, and cannot be monitored"
+                )
+            else:
+                model_artifact = endpoint_record["model_artifact"]
+                model_artifact = get_model(model_artifact)
+                feature_stats = model_artifact[1].feature_stats
+                feature_names = list(feature_stats.keys())
+                feature_names = list(map(self.clean_feature_name, feature_names))
+                self.feature_names[event["endpoint_id"]] = feature_names
+
+        if event["endpoint_id"] in self.feature_names:
+            named_features = {}
+            for feature_name, feature in zip(
+                self.feature_names[event["endpoint_id"]], event["features"]
+            ):
+                named_features[feature_name] = feature
+            event["named_features"] = named_features
+            return event
+
+    @staticmethod
+    def clean_feature_name(feature_name: str):
+        return feature_name.replace(" ", "_").replace("(", "").replace(")", "")
 
 
 class UpdateKV(MapClass):
