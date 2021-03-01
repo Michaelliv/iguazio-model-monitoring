@@ -23,6 +23,7 @@ from storey import (
     FlatMap,
     WriteToParquet,
     Batch,
+    Filter,
 )
 from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
@@ -81,6 +82,7 @@ class EventStreamProcessor:
                 ProcessEndpointEvent(),
                 FlatMap(self.unpack_predictions),
                 MapFeatureNames(),
+                Filter(lambda e: e is not None),
                 # Branch 1: Aggregate events, count averages and update TSDB and KV
                 [
                     AggregateByKey(
@@ -273,22 +275,22 @@ class MapFeatureNames(MapClass):
                 logger.error(
                     f"Endpoint {event['endpoint_id']} was not registered, and cannot be monitored"
                 )
-            else:
-                model_artifact = endpoint_record["model_artifact"]
-                model_artifact = get_model(model_artifact)
-                feature_stats = model_artifact[1].feature_stats
-                feature_names = list(feature_stats.keys())
-                feature_names = list(map(self.clean_feature_name, feature_names))
-                self.feature_names[event["endpoint_id"]] = feature_names
+                return None
 
-        if event["endpoint_id"] in self.feature_names:
-            named_features = {}
-            for feature_name, feature in zip(
-                self.feature_names[event["endpoint_id"]], event["features"]
-            ):
-                named_features[feature_name] = feature
-            event["named_features"] = named_features
-            return event
+            model_artifact = endpoint_record["model_artifact"]
+            model_artifact = get_model(model_artifact)
+            feature_stats = model_artifact[1].feature_stats
+            feature_names = list(feature_stats.keys())
+            feature_names = list(map(self.clean_feature_name, feature_names))
+            self.feature_names[event["endpoint_id"]] = feature_names
+
+        named_features = {}
+        for feature_name, feature in zip(
+            self.feature_names[event["endpoint_id"]], event["features"]
+        ):
+            named_features[feature_name] = feature
+        event["named_features"] = named_features
+        return event
 
     @staticmethod
     def clean_feature_name(feature_name: str):
