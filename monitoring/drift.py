@@ -35,10 +35,10 @@ class VirtualDrift:
         }
 
     def yaml_to_histogram(self, histogram_yaml):
-        histograms = {
-            feature: feature_stats["hist"][0]
-            for feature, feature_stats in histogram_yaml.items()
-        }
+        histograms = {}
+        for feature, stats in histogram_yaml.items():
+            histograms[feature] = stats["hist"][0]
+
         # Get features value counts
         histograms = pd.concat(
             [
