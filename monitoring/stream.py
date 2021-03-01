@@ -268,7 +268,7 @@ class MapFeatureNames(MapClass):
                 container=config.get("CONTAINER"),
                 table_path=config.get("KV_PATH_TEMPLATE").format(**event),
                 key=event["endpoint_id"]
-            )
+            ).output.item
 
             logger.info(f"Grabbing {event['endpoint_id']} artifact data {endpoint_record}")
 
