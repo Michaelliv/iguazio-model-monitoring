@@ -271,6 +271,8 @@ class MapFeatureNames(MapClass):
                 attribute_names=["model_artifact"],
             )
 
+            logger.info(f"Grabbing {event['endpoint_id']} artifact data {endpoint_record}")
+
             if "model_artifact" not in endpoint_record:
                 logger.error(
                     f"Endpoint {event['endpoint_id']} was not registered, and cannot be monitored"
