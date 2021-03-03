@@ -397,23 +397,26 @@ class InferSchema(MapClass):
         self.inferred = {}
 
     def do(self, event: Dict):
-        path = self.path_template.format(**event)
+        table = self.path_template.format(**event)
         key_set = set(event.keys())
-        if path not in self.inferred:
-            self.inferred[path] = key_set
-            get_frames_client(
-                token=config.get("V3IO_ACCESS_KEY"),
-                container=config.get("CONTAINER"),
-                address=config.get("V3IO_FRAMESD"),
-            ).execute(backend="kv", table=path, command="infer_schema")
-        else:
-            if not key_set.issubset(self.inferred[path]):
-                self.inferred[path] = self.inferred[path].union(key_set)
+        if table not in self.inferred:
+            self.inferred[table] = key_set
+            try:
                 get_frames_client(
                     token=config.get("V3IO_ACCESS_KEY"),
                     container=config.get("CONTAINER"),
                     address=config.get("V3IO_FRAMESD"),
-                ).execute(backend="kv", table=path, command="infer_schema")
+                ).execute(backend="kv", table=table, command="infer_schema")
+            except Exception as e:
+                logger.error("Failed to infer table, assuming table is already inferred", table=table)
+        else:
+            if not key_set.issubset(self.inferred[table]):
+                self.inferred[table] = self.inferred[table].union(key_set)
+                get_frames_client(
+                    token=config.get("V3IO_ACCESS_KEY"),
+                    container=config.get("CONTAINER"),
+                    address=config.get("V3IO_FRAMESD"),
+                ).execute(backend="kv", table=table, command="infer_schema")
         return event
 
 
