@@ -7,7 +7,6 @@ from typing import Dict, List, Set, Optional, Callable, Union
 
 import pandas as pd
 import v3io_frames
-from mlrun.api.crud.model_endpoints import get_endpoint_kv_record_by_id
 from mlrun.artifacts import get_model
 from mlrun.utils import logger
 from mlrun.utils.v3io_clients import get_v3io_client, get_frames_client
@@ -264,13 +263,23 @@ class MapFeatureNames(MapClass):
 
     def do(self, event: Dict):
         if event["endpoint_id"] not in self.feature_names:
-            endpoint_record = get_v3io_client().kv.get(
-                container=config.get("CONTAINER"),
-                table_path=config.get("KV_PATH_TEMPLATE").format(**event),
-                key=event["endpoint_id"]
-            ).output.item
+            table_path = config.get("KV_PATH_TEMPLATE").format(**event)
 
-            logger.info(f"Grabbing {event['endpoint_id']} artifact data {endpoint_record}")
+            logger.info(
+                f"Grabbing artifact data",
+                endpoint_id=event["endpoint_id"],
+                table_path=table_path,
+            )
+
+            endpoint_record = (
+                get_v3io_client()
+                .kv.get(
+                    container=config.get("CONTAINER"),
+                    table_path=table_path,
+                    key=event["endpoint_id"],
+                )
+                .output.item
+            )
 
             if "model_artifact" not in endpoint_record:
                 logger.error(
