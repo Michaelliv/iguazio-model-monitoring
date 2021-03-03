@@ -281,15 +281,20 @@ class MapFeatureNames(MapClass):
                 .output.item
             )
 
-            if "model_artifact" not in endpoint_record:
-                logger.error(
-                    f"Endpoint {event['endpoint_id']} was not registered, and cannot be monitored"
-                )
-                return None
+            feature_stats = endpoint_record.get("feature_stats")
+            feature_stats = json.loads(feature_stats) if feature_stats else None
 
-            model_artifact = endpoint_record["model_artifact"]
-            model_artifact = get_model(model_artifact)
-            feature_stats = model_artifact[1].feature_stats
+            if feature_stats is None:
+                if "model_artifact" not in endpoint_record:
+                    logger.error(
+                        f"Endpoint {event['endpoint_id']} was not registered, and cannot be monitored"
+                    )
+                    return None
+
+                model_artifact = endpoint_record["model_artifact"]
+                model_artifact = get_model(model_artifact)
+                feature_stats = model_artifact[1].feature_stats
+
             feature_names = list(feature_stats.keys())
             feature_names = list(map(self.clean_feature_name, feature_names))
             self.feature_names[event["endpoint_id"]] = feature_names
