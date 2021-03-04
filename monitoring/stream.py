@@ -257,7 +257,7 @@ class FlattenPredictions(FlatMap):
 
 class FilterNotNone(Filter):
     def __init__(self, **kwargs):
-        super().__init__(lambda event: event is not None, **kwargs)
+        super().__init__(fn=lambda event: event is not None, **kwargs)
 
 
 class MapFeatureNames(MapClass):
