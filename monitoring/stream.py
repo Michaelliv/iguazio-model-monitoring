@@ -246,9 +246,10 @@ class ProcessEndpointEvent(MapClass):
 
 class FlattenPredictions(FlatMap):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(fn=FlattenPredictions.flatten, **kwargs)
 
-    def do(self, event: Dict):
+    @staticmethod
+    def flatten(event: Dict):
         predictions = []
         for features, prediction in zip(event["features"], event["prediction"]):
             predictions.append(dict(event, features=features, prediction=prediction))
