@@ -7,7 +7,6 @@ from typing import Dict, List, Set, Optional, Callable, Union
 
 import pandas as pd
 import v3io_frames
-from mlrun.artifacts import get_model
 from mlrun.utils import logger
 from mlrun.utils.v3io_clients import get_v3io_client, get_frames_client
 from storey import (
@@ -79,9 +78,9 @@ class EventStreamProcessor:
             [
                 Source(),
                 ProcessEndpointEvent(),
-                FlatMap(self.unpack_predictions),
+                FilterNotNone(),
+                FlattenPredictions(),
                 MapFeatureNames(),
-                Filter(lambda e: e is not None),
                 # Branch 1: Aggregate events, count averages and update TSDB and KV
                 [
                     AggregateByKey(
@@ -119,20 +118,6 @@ class EventStreamProcessor:
                             path_builder=lambda e: f"{e[-1]['project']}/model-endpoints/events",
                             tsdb_columns=self._events_tsdb_keys,
                             rate="10/m",
-                        ),
-                    ],
-                    [
-                        Map(self.process_before_features_tsdb),
-                        Batch(
-                            max_events=config.get_int("TSDB_BATCHING_MAX_EVENTS"),
-                            timeout_secs=config.get_int("TSDB_BATCHING_TIMEOUT_SECS"),
-                            key=lambda e: e.body["endpoint_id"],
-                        ),
-                        UpdateTSDB(
-                            path_builder=lambda e: f"{e[-1]['project']}/model-endpoints/features",
-                            rate="10/m",
-                            infer_columns=True,
-                            exclude_columns={"project"},
                         ),
                     ],
                 ],
@@ -180,14 +165,6 @@ class EventStreamProcessor:
         )
         return e
 
-    def process_before_features_tsdb(self, event: Dict):
-        e = {k: event[k] for k in self._features_tsdb_keys}
-        e = {**e, **e.pop("named_features", {})}
-        e["timestamp"] = pd.to_datetime(
-            e["timestamp"], format=config.get("TIME_FORMAT")
-        )
-        return e
-
 
 class ProcessEndpointEvent(MapClass):
     def __init__(self, **kwargs):
@@ -195,57 +172,45 @@ class ProcessEndpointEvent(MapClass):
         self.first_request: Dict[str, str] = dict()
         self.last_request: Dict[str, str] = dict()
         self.error_count: Dict[str, int] = defaultdict(int)
+        self.endpoints: Set[str] = set()
 
     def do(self, event: dict):
         endpoint_details = endpoint_details_from_event(event)
         endpoint_id = endpoint_id_from_details(endpoint_details)
-        when = event["when"]
 
-        # error = event.get("error")
-        # if error:
-        #     try:
-        #         self.error_count[endpoint_id] += 1
-        #         client = get_frames_client(
-        #             config.get("V3IO_ACCESS_KEY"),
-        #             container=config.get("CONTAINER"),
-        #             address=config.get("V3IO_FRAMESD"),
-        #         )
-        #
-        #         ts_error = {
-        #             "timestamp": pd.to_datetime(when, format=ISO_8601, utc=True),
-        #             "endpoint_id": endpoint_id,
-        #             "error": error,
-        #         }
-        #
-        #         df = pd.DataFrame([ts_error])
-        #         df.set_index(["timestamp", "endpoint_id"])
-        #         path = f"{endpoint_details['project']}/error_log"
-        #         if path not in self.error_paths:
-        #             self.error_paths.add(path)
-        #             client.create(
-        #                 backend="tsdb",
-        #                 table=path,
-        #                 if_exists=v3io_frames.frames_pb2.IGNORE,
-        #                 rate="10/m",
-        #             )
-        #         client.write("tsdb", path, df)
-        #
-        #     except Exception as e:
-        #         print(e)
-        # else:
+        # In case this process fails, resume state from existing record
+        self.resume_state(endpoint_id, event)
+
+        # Validate event fields
+        timestamp = event.get("when")
+        request_id = event.get("request", {}).get("id")
+        latency = event.get("microsec")
+        features = event.get("request", {}).get("inputs")
+        prediction = event.get("resp", {}).get("outputs")
+
+        if not self.validate_input(timestamp, "when"):
+            return None
 
         if endpoint_id not in self.first_request:
-            self.first_request[endpoint_id] = when
+            self.first_request[endpoint_id] = timestamp
+        self.last_request[endpoint_id] = timestamp
 
-        self.last_request[endpoint_id] = when
+        if not self.validate_input(request_id, "request", "id"):
+            return None
+        if not self.validate_input(latency, "microsec"):
+            return None
+        if not self.validate_input(features, "request", "inputs"):
+            return None
+        if not self.validate_input(prediction, "resp", "outputs"):
+            return None
 
         event = {
-            "timestamp": when,
+            "timestamp": timestamp,
             "endpoint_id": endpoint_id,
-            "request_id": event["request"]["id"],
-            "latency": event["microsec"],
-            "features": event["request"]["inputs"],
-            "prediction": event["resp"]["outputs"],
+            "request_id": request_id,
+            "latency": latency,
+            "features": features,
+            "prediction": prediction,
             "first_request": self.first_request[endpoint_id],
             "last_request": self.last_request[endpoint_id],
             "error_count": self.error_count[endpoint_id],
@@ -255,6 +220,45 @@ class ProcessEndpointEvent(MapClass):
 
         return event
 
+    def resume_state(self, endpoint_id, event):
+        # Make sure process is resumable, if process fails for any reason, be able to pick things up close to where we
+        # left them
+        if endpoint_id not in self.endpoints:
+            endpoint_record = get_endpoint_record(endpoint_id, event)
+            if endpoint_record:
+                first_request = endpoint_record["first_request"]
+                if first_request:
+                    self.first_request[endpoint_id] = first_request
+                error_count = endpoint_record["error_count"]
+                if error_count:
+                    self.error_count[endpoint_id] = error_count
+            self.endpoints.add(endpoint_id)
+
+    def validate_input(self, field, *args):
+        if field is None:
+            logger.error(
+                f"Expected event field is missing: {field} [Event -> {''.join(args)}]"
+            )
+            self.error_count += 1
+            return False
+        return True
+
+
+class FlattenPredictions(FlatMap):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def do(self, event: Dict):
+        predictions = []
+        for features, prediction in zip(event["features"], event["prediction"]):
+            predictions.append(dict(event, features=features, prediction=prediction))
+        return predictions
+
+
+class FilterNotNone(Filter):
+    def __init__(self, **kwargs):
+        super().__init__(lambda event: event is not None, **kwargs)
+
 
 class MapFeatureNames(MapClass):
     def __init__(self, **kwargs):
@@ -262,49 +266,27 @@ class MapFeatureNames(MapClass):
         self.feature_names = {}
 
     def do(self, event: Dict):
-        if event["endpoint_id"] not in self.feature_names:
-            table_path = config.get("KV_PATH_TEMPLATE").format(**event)
+        endpoint_id = event["endpoint_id"]
 
-            logger.info(
-                f"Grabbing artifact data",
-                endpoint_id=event["endpoint_id"],
-                table_path=table_path,
-            )
+        if endpoint_id not in self.feature_names:
+            endpoint_record = get_endpoint_record(endpoint_id, event)
+            feature_names = endpoint_record.get("feature_names")
+            feature_names = json.loads(feature_names) if feature_names else None
 
-            endpoint_record = (
-                get_v3io_client()
-                .kv.get(
-                    container=config.get("CONTAINER"),
-                    table_path=table_path,
-                    key=event["endpoint_id"],
+            if not feature_names:
+                logger.warn(
+                    f"Seems like endpoint {event['endpoint_id']} was not registered, feature names will be "
+                    f"automatically generated"
                 )
-                .output.item
-            )
+                feature_names = [f"f{i}" for i in enumerate(event["features"])]
 
-            feature_stats = endpoint_record.get("feature_stats")
-            feature_stats = json.loads(feature_stats) if feature_stats else None
+            self.feature_names[endpoint_id] = feature_names
 
-            if feature_stats is None:
-                if "model_artifact" not in endpoint_record:
-                    logger.error(
-                        f"Endpoint {event['endpoint_id']} was not registered, and cannot be monitored"
-                    )
-                    return None
-
-                model_artifact = endpoint_record["model_artifact"]
-                model_artifact = get_model(model_artifact)
-                feature_stats = model_artifact[1].feature_stats
-
-            feature_names = list(feature_stats.keys())
-            feature_names = list(map(self.clean_feature_name, feature_names))
-            self.feature_names[event["endpoint_id"]] = feature_names
-
-        named_features = {}
-        for feature_name, feature in zip(
-            self.feature_names[event["endpoint_id"]], event["features"]
-        ):
-            named_features[feature_name] = feature
-        event["named_features"] = named_features
+        feature_names = self.feature_names[endpoint_id]
+        features = event["features"]
+        event["named_features"] = {
+            name: feature for name, feature in zip(feature_names, features)
+        }
         return event
 
     @staticmethod
@@ -408,7 +390,10 @@ class InferSchema(MapClass):
                     address=config.get("V3IO_FRAMESD"),
                 ).execute(backend="kv", table=table, command="infer_schema")
             except Exception as e:
-                logger.error("Failed to infer table, assuming table is already inferred", table=table)
+                logger.error(
+                    "Failed to infer table, assuming table is already inferred",
+                    table=table,
+                )
         else:
             if not key_set.issubset(self.inferred[table]):
                 self.inferred[table] = self.inferred[table].union(key_set)
@@ -480,3 +465,23 @@ def _process_before_parquet(batch: List[dict]):
             if not event["unpacked_labels"]:
                 event["unpacked_labels"] = None
     return batch
+
+
+def get_endpoint_record(endpoint_id, event) -> Optional[dict]:
+    table_path = config.get("KV_PATH_TEMPLATE").format(**event)
+    logger.info(
+        f"Grabbing endpoint data", endpoint_id=endpoint_id, table_path=table_path,
+    )
+    try:
+        endpoint_record = (
+            get_v3io_client()
+            .kv.get(
+                container=config.get("CONTAINER"),
+                table_path=table_path,
+                key=endpoint_id,
+            )
+            .output.item
+        )
+        return endpoint_record
+    except Exception:
+        return None
