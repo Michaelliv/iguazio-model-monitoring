@@ -64,12 +64,6 @@ class EventStreamProcessor:
             "endpoint_id",
             "predictions_per_second_count_1s",
             "latency_avg_1s",
-        ]
-
-        self._features_tsdb_keys = [
-            "timestamp",
-            "endpoint_id",
-            "project",
             "named_features",
             "prediction",
         ]
