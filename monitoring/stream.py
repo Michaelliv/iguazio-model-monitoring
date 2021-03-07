@@ -21,7 +21,7 @@ from storey import (
     FlatMap,
     WriteToParquet,
     Batch,
-    Filter,
+    Filter, WriteToTSDB,
 )
 from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
@@ -64,8 +64,8 @@ class EventStreamProcessor:
             "endpoint_id",
             "predictions_per_second_count_1s",
             "latency_avg_1s",
-            # "named_features",
-            # "prediction",
+            "named_features",
+            "prediction",
         ]
 
         self._flow = build_flow(
@@ -110,7 +110,7 @@ class EventStreamProcessor:
                         ),
                         UpdateTSDB(
                             path_builder=lambda e: f"{e[-1]['project']}/model-endpoints/events",
-                            tsdb_columns=self._events_tsdb_keys,
+                            infer_columns=True,
                             rate="10/m",
                         ),
                     ],
@@ -154,6 +154,7 @@ class EventStreamProcessor:
 
     def process_before_events_tsdb(self, event: Dict):
         e = {k: event[k] for k in self._events_tsdb_keys}
+        e = {**e, **e.pop("named_features")}
         e["timestamp"] = pd.to_datetime(
             e["timestamp"], format=config.get("TIME_FORMAT")
         )
