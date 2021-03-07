@@ -21,7 +21,7 @@ from storey import (
     FlatMap,
     WriteToParquet,
     Batch,
-    Filter, WriteToTSDB,
+    Filter,
 )
 from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
