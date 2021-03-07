@@ -226,10 +226,10 @@ class ProcessEndpointEvent(MapClass):
         if endpoint_id not in self.endpoints:
             endpoint_record = get_endpoint_record(endpoint_id, endpoint_details)
             if endpoint_record:
-                first_request = endpoint_record["first_request"]
+                first_request = endpoint_record.get("first_request")
                 if first_request:
                     self.first_request[endpoint_id] = first_request
-                error_count = endpoint_record["error_count"]
+                error_count = endpoint_record.get("error_count")
                 if error_count:
                     self.error_count[endpoint_id] = error_count
             self.endpoints.add(endpoint_id)
