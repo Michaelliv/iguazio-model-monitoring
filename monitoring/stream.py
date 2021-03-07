@@ -64,8 +64,8 @@ class EventStreamProcessor:
             "endpoint_id",
             "predictions_per_second_count_1s",
             "latency_avg_1s",
-            "named_features",
-            "prediction",
+            # "named_features",
+            # "prediction",
         ]
 
         self._flow = build_flow(
