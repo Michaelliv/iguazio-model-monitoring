@@ -179,7 +179,7 @@ class ProcessEndpointEvent(MapClass):
         endpoint_id = endpoint_id_from_details(endpoint_details)
 
         # In case this process fails, resume state from existing record
-        self.resume_state(endpoint_id, event)
+        self.resume_state(endpoint_id, endpoint_details)
 
         # Validate event fields
         timestamp = event.get("when")
@@ -220,11 +220,11 @@ class ProcessEndpointEvent(MapClass):
 
         return event
 
-    def resume_state(self, endpoint_id, event):
+    def resume_state(self, endpoint_id, endpoint_details):
         # Make sure process is resumable, if process fails for any reason, be able to pick things up close to where we
         # left them
         if endpoint_id not in self.endpoints:
-            endpoint_record = get_endpoint_record(endpoint_id, event)
+            endpoint_record = get_endpoint_record(endpoint_id, endpoint_details)
             if endpoint_record:
                 first_request = endpoint_record["first_request"]
                 if first_request:
@@ -468,8 +468,8 @@ def _process_before_parquet(batch: List[dict]):
     return batch
 
 
-def get_endpoint_record(endpoint_id, event) -> Optional[dict]:
-    table_path = config.get("KV_PATH_TEMPLATE").format(**event)
+def get_endpoint_record(endpoint_id, endpoint_details) -> Optional[dict]:
+    table_path = config.get("KV_PATH_TEMPLATE").format(**endpoint_details)
     logger.info(
         f"Grabbing endpoint data", endpoint_id=endpoint_id, table_path=table_path,
     )
