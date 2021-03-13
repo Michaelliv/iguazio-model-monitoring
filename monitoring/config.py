@@ -53,6 +53,7 @@ config = Config(
     {
         "SAMPLE_WINDOW": 10,
         "KV_PATH_TEMPLATE": "{project}/model-endpoints/endpoints",
+        "TSDB_PATH_TEMPLATE": "{project}/model-endpoints/events",
         "PARQUET_PATH_TEMPLATE": "/v3io/projects/{project}/model-endpoints/parquet",  # Assuming v3io is mounted
         "TSDB_BATCHING_MAX_EVENTS": 10,
         "TSDB_BATCHING_TIMEOUT_SECS": 60 * 5,  # Default 5 minutes
