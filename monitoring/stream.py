@@ -42,6 +42,7 @@ class EventStreamProcessor:
         )
 
         self._kv_keys = [
+            "function_uri",
             "timestamp",
             "project",
             "model",
@@ -252,6 +253,10 @@ class ProcessEndpointEvent(MapClass):
         self.endpoints: Set[str] = set()
 
     def do(self, event: dict):
+        function_uri = event.get("function_uri")
+        if not self.validate_input(function_uri, ["function_uri"]):
+            return None
+
         endpoint_spec = self.endpoint_spec_from_event(event)
         endpoint_id = ModelEndpoint.create_endpoint_id(
             project=endpoint_spec["project"],
@@ -275,23 +280,24 @@ class ProcessEndpointEvent(MapClass):
         features = event.get("request", {}).get("inputs")
         prediction = event.get("resp", {}).get("outputs")
 
-        if not self.validate_input(timestamp, "when"):
+        if not self.validate_input(timestamp, ["when"]):
             return None
 
         if endpoint_id not in self.first_request:
             self.first_request[endpoint_id] = timestamp
         self.last_request[endpoint_id] = timestamp
 
-        if not self.validate_input(request_id, "request", "id"):
+        if not self.validate_input(request_id, ["request", "id"]):
             return None
-        if not self.validate_input(latency, "microsec"):
+        if not self.validate_input(latency, ["microsec"]):
             return None
-        if not self.validate_input(features, "request", "inputs"):
+        if not self.validate_input(features, ["request", "inputs"]):
             return None
-        if not self.validate_input(prediction, "resp", "outputs"):
+        if not self.validate_input(prediction, ["resp", "outputs"]):
             return None
 
         event = {
+            "function_uri": function_uri,
             "timestamp": timestamp,
             "endpoint_id": endpoint_id,
             "request_id": request_id,
@@ -303,6 +309,7 @@ class ProcessEndpointEvent(MapClass):
             "error_count": self.error_count[endpoint_id],
             "labels": event.get("labels", {}),
             "metrics": event.get("metrics", {}),
+            "entities": event.get("request", {}).get("entities", {}),
             "unpacked_labels": {f"_{k}": v for k, v in event.get("labels", {}).items()},
             **endpoint_spec,
         }
@@ -352,10 +359,10 @@ class ProcessEndpointEvent(MapClass):
 
         return False
 
-    def validate_input(self, field, *args):
+    def validate_input(self, field, dict_path: List[str]):
         if field is None:
             logger.error(
-                f"Expected event field is missing: {field} [Event -> {''.join(args)}]"
+                f"Expected event field is missing: {field} [Event -> {''.join(dict_path)}]"
             )
             self.error_count += 1
             return False
@@ -542,7 +549,7 @@ def _process_before_parquet(batch: List[dict]):
         last_event = batch[-1]["timestamp"]
         for event in batch:
             event["batch_timestamp"] = last_event
-            none_if_empty(event, ["labels", "unpacked_labels", "metrics"])
+            none_if_empty(event, ["labels", "unpacked_labels", "metrics", "entities"])
     return batch
 
 
