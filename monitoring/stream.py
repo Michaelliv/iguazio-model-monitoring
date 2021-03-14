@@ -99,8 +99,6 @@ class EventStreamProcessor:
                         InferSchema(table=self.kv_path),
                     ],
                     # Branch 1.2: Update TSDB
-                    # base_metrics
-                    # endpoint_features
                     [
                         # Map the event into taggable fields, add record type to each field
                         Map(self.process_before_events_tsdb),
@@ -535,12 +533,16 @@ class UpdateParquet(WriteToParquet):
 
 
 def _process_before_parquet(batch: List[dict]):
+    def none_if_empty(_event: dict, keys: List[str]):
+        for key in keys:
+            if not _event.get(key):
+                _event[key] = None
+
     if batch:
         last_event = batch[-1]["timestamp"]
         for event in batch:
             event["batch_timestamp"] = last_event
-            if not event["unpacked_labels"]:
-                event["unpacked_labels"] = None
+            none_if_empty(event, ["labels", "unpacked_labels", "metrics"])
     return batch
 
 
