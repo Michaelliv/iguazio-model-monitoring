@@ -249,11 +249,12 @@ class ProcessEndpointEvent(MapClass):
         function_uri = event.get("function_uri")
         if not self.validate_input(function_uri, ["function_uri"]):
             return None
+
         model = event.get("model")
         if not self.validate_input(model, ["model"]):
             return None
-        version = event.get("version")
 
+        version = event.get("version")
         versioned_model = f"{model}_{version}" if version else model
 
         endpoint_id = ModelEndpoint.create_endpoint_id(
