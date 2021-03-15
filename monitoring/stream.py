@@ -1,9 +1,6 @@
-import asyncio
 import json
-import os
 from collections import defaultdict
-from functools import partial
-from typing import Dict, List, Set, Optional, Union, Any
+from typing import Dict, List, Set, Optional
 
 import pandas as pd
 from mlrun.api.schemas.model_endpoints import ModelEndpoint
@@ -26,7 +23,6 @@ from storey import (
 )
 from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
-from storey.utils import url_to_file_system
 
 from monitoring.config import config
 
@@ -43,12 +39,9 @@ class EventStreamProcessor:
 
         self._kv_keys = [
             "function_uri",
-            "timestamp",
-            "project",
             "model",
-            "function",
-            "tag",
             "model_class",
+            "timestamp",
             "endpoint_id",
             "labels",
             "unpacked_labels",
@@ -256,13 +249,15 @@ class ProcessEndpointEvent(MapClass):
         function_uri = event.get("function_uri")
         if not self.validate_input(function_uri, ["function_uri"]):
             return None
+        model = event.get("model")
+        if not self.validate_input(model, ["model"]):
+            return None
+        version = event.get("version")
 
-        endpoint_spec = self.endpoint_spec_from_event(event)
+        versioned_model = f"{model}_{version}" if version else model
+
         endpoint_id = ModelEndpoint.create_endpoint_id(
-            project=endpoint_spec["project"],
-            function=endpoint_spec["function"],
-            model=endpoint_spec["model"],
-            tag=endpoint_spec["tag"],
+            function_uri=function_uri, versioned_model=versioned_model,
         )
 
         # In case this process fails, resume state from existing record
@@ -274,6 +269,7 @@ class ProcessEndpointEvent(MapClass):
             return None
 
         # Validate event fields
+        model_class = event.get("model_class") or event.get("class")
         timestamp = event.get("when")
         request_id = event.get("request", {}).get("id")
         latency = event.get("microsec")
@@ -298,6 +294,8 @@ class ProcessEndpointEvent(MapClass):
 
         event = {
             "function_uri": function_uri,
+            "model": model,
+            "model_class": model_class,
             "timestamp": timestamp,
             "endpoint_id": endpoint_id,
             "request_id": request_id,
@@ -311,30 +309,9 @@ class ProcessEndpointEvent(MapClass):
             "metrics": event.get("metrics", {}),
             "entities": event.get("request", {}).get("entities", {}),
             "unpacked_labels": {f"_{k}": v for k, v in event.get("labels", {}).items()},
-            **endpoint_spec,
         }
 
         return event
-
-    @staticmethod
-    def endpoint_spec_from_event(event: Dict) -> Dict[str, Any]:
-        project, function_with_tag = event["function_uri"].split("/")
-
-        try:
-            function, tag = function_with_tag.split(":")
-        except ValueError:
-            function, tag = function_with_tag, ""
-
-        model = event["model"]
-        model_class = event.get("model_class") or event.get("class")
-
-        return {
-            "project": project,
-            "model": model,
-            "function": function,
-            "tag": tag,
-            "model_class": model_class,
-        }
 
     def resume_state(self, endpoint_id):
         # Make sure process is resumable, if process fails for any reason, be able to pick things up close to where we
@@ -487,69 +464,22 @@ class InferSchema(MapClass):
         return event
 
 
-class UpdateParquet(WriteToParquet):
-    def __init__(
-        self,
-        path_template: str,
-        index_cols: Union[str, List[str], None] = None,
-        columns: Union[str, List[str], None] = None,
-        partition_cols: Optional[List[str]] = None,
-        infer_columns_from_data: Optional[bool] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            "", index_cols, columns, partition_cols, infer_columns_from_data, **kwargs
-        )
-
-        self.path_template = path_template
-        self.projects = set()
-
-    def _makedirs_by_path(self, path):
-        fs, file_path = url_to_file_system(path, self._storage_options)
-        dirname = os.path.dirname(path)
-        if dirname:
-            fs.makedirs(dirname, exist_ok=True)
-
-    async def _emit(self, batch, batch_time):
-        partition_by_project = defaultdict(list)
-        for event in batch:
-            project = event[1].split(".")[0]
-            partition_by_project[project].append(event)
-
-        for project, events in partition_by_project.items():
-            path = self.path_template.format(project=project)
-            if project not in self.projects:
-                await asyncio.get_running_loop().run_in_executor(
-                    None, partial(self._makedirs_by_path, path=path),
-                )
-            self.projects.add(project)
-
-            df_columns = []
-            if self._index_cols:
-                df_columns.extend(self._index_cols)
-            df_columns.extend(self._columns)
-            df = pd.DataFrame(batch, columns=df_columns)
-            if self._index_cols:
-                df.set_index(self._index_cols, inplace=True)
-            df.to_parquet(
-                path=path,
-                index=bool(self._index_cols),
-                partition_cols=self._partition_cols,
-                storage_options=self._storage_options,
-            )
-
-
 def _process_before_parquet(batch: List[dict]):
-    def none_if_empty(_event: dict, keys: List[str]):
+    def set_none_if_empty(_event: dict, keys: List[str]):
         for key in keys:
             if not _event.get(key):
                 _event[key] = None
+
+    def drop_if_exists(_event: dict, keys: List[str]):
+        for key in keys:
+            _event.pop(key, None)
 
     if batch:
         last_event = batch[-1]["timestamp"]
         for event in batch:
             event["batch_timestamp"] = last_event
-            none_if_empty(event, ["labels", "unpacked_labels", "metrics", "entities"])
+            drop_if_exists(last_event, ["unpacked_labels"])
+            set_none_if_empty(event, ["labels", "metrics", "entities"])
     return batch
 
 
