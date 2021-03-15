@@ -319,6 +319,7 @@ class ProcessEndpointEvent(MapClass):
         # Make sure process is resumable, if process fails for any reason, be able to pick things up close to where we
         # left them
         if endpoint_id not in self.endpoints:
+            logger.info("Trying to resume state", endpoint_id=endpoint_id)
             endpoint_record = get_endpoint_record(
                 path=self.kv_path, endpoint_id=endpoint_id,
             )
