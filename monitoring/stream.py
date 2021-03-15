@@ -260,6 +260,7 @@ class ProcessEndpointEvent(MapClass):
         endpoint_id = ModelEndpoint.create_endpoint_id(
             function_uri=function_uri, versioned_model=versioned_model,
         )
+        endpoint_id = str(endpoint_id)
 
         # In case this process fails, resume state from existing record
         self.resume_state(endpoint_id)
