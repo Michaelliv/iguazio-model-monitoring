@@ -481,7 +481,7 @@ def _process_before_parquet(batch: List[dict]):
         last_event = batch[-1]["timestamp"]
         for event in batch:
             event["batch_timestamp"] = last_event
-            drop_if_exists(last_event, ["unpacked_labels"])
+            drop_if_exists(event, ["unpacked_labels"])
             set_none_if_empty(event, ["labels", "metrics", "entities"])
     return batch
 
