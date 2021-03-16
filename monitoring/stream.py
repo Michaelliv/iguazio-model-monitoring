@@ -1,5 +1,7 @@
 import json
 from collections import defaultdict
+from dataclasses import dataclass, fields
+from os import environ
 from typing import Dict, List, Set, Optional
 
 import pandas as pd
@@ -24,32 +26,100 @@ from storey import (
 from storey.dtypes import SlidingWindows
 from storey.steps import SampleWindow
 
-from monitoring.config import config
+# Constants
+FUNCTION_URI = "function_uri"
+MODEL = "model"
+VERSION = "version"
+MODEL_CLASS = "model_class"
+TIMESTAMP = "timestamp"
+ENDPOINT_ID = "endpoint_id"
+REQUEST_ID = "request_id"
+LABELS = "labels"
+UNPACKED_LABELS = "unpacked_labels"
+LATENCY_AVG_1S = "latency_avg_1s"
+PREDICTIONS_PER_SECOND_COUNT_1S = "predictions_per_second_count_1s"
+FIRST_REQUEST = "first_request"
+LAST_REQUEST = "last_request"
+ERROR_COUNT = "error_count"
+ENTITIES = "entities"
+FEATURE_NAMES = "feature_names"
+PREDICTIONS_PER_SECOND = "predictions_per_second"
+LATENCY = "latency"
+RECORD_TYPE = "record_type"
+FEATURES = "features"
+PREDICTION = "prediction"
+NAMED_FEATURES = "named_features"
+BASE_METRICS = "base_metrics"
+CUSTOM_METRICS = "custom_metrics"
+ENDPOINT_FEATURES = "endpoint_features"
+METRICS = "metrics"
+BATCH_TIMESTAMP = "batch_timestamp"
+
+# Configuration
+@dataclass
+class Config:
+    sample_window: int
+    kv_path_template: str
+    tsdb_path_template: str
+    parquet_path_template: str
+    tsdb_batching_max_events: int
+    tsdb_batching_timeout_secs: int
+    parquet_batching_max_events: int
+    parquet_batching_timeout_secs: int
+    container: str
+    v3io_access_key: str
+    v3io_framesd: str
+    time_format: str
+
+    _environment_override: bool = True
+
+    def __post_init__(self):
+        if self._environment_override:
+            for field in fields(self):
+                if field.name.startswith("_"):
+                    continue
+                val = environ.get(field.name.upper(), field.value)
+                setattr(self, field.name, val)
 
 
+config = Config(
+    sample_window=10,
+    kv_path_template="{project}/model-endpoints/endpoints",
+    tsdb_path_template="{project}/model-endpoints/events",
+    parquet_path_template="/v3io/projects/{project}/model-endpoints/parquet",  # Assuming v3io is mounted
+    tsdb_batching_max_events=10,
+    tsdb_batching_timeout_secs=60 * 5,  # Default 5 minutes
+    parquet_batching_max_events=10_000,
+    parquet_batching_timeout_secs=60 * 60,  # Default 1 hour
+    container="projects",
+    v3io_access_key="",
+    v3io_framesd="",
+    time_format="%Y-%m-%d %H:%M:%S.%f",  # ISO 8061
+)
+
+
+# Stream processing code
 class EventStreamProcessor:
     def __init__(self, project: str):
 
         self.project = project
-        self.kv_path = config.get("KV_PATH_TEMPLATE").format(project=self.project)
-        self.tsdb_path = config.get("TSDB_PATH_TEMPLATE").format(project=self.project)
-        self.parquet_path = config.get("PARQUET_PATH_TEMPLATE").format(
-            project=self.project
-        )
+        self.kv_path = config.kv_path_template.format(project=self.project)
+        self.tsdb_path = config.tsdb_path_template.format(project=self.project)
+        self.parquet_path = config.parquet_path_template.format(project=self.project)
 
         self._kv_keys = [
-            "function_uri",
-            "model",
-            "model_class",
-            "timestamp",
-            "endpoint_id",
-            "labels",
-            "unpacked_labels",
-            "latency_avg_1s",
-            "predictions_per_second_count_1s",
-            "first_request",
-            "last_request",
-            "error_count",
+            FUNCTION_URI,
+            MODEL,
+            MODEL_CLASS,
+            TIMESTAMP,
+            ENDPOINT_ID,
+            LABELS,
+            UNPACKED_LABELS,
+            LATENCY_AVG_1S,
+            PREDICTIONS_PER_SECOND_COUNT_1S,
+            FIRST_REQUEST,
+            LAST_REQUEST,
+            ERROR_COUNT,
         ]
 
         logger.info(
@@ -71,21 +141,18 @@ class EventStreamProcessor:
                     AggregateByKey(
                         aggregates=[
                             FieldAggregator(
-                                "predictions_per_second",
-                                "endpoint_id",
+                                PREDICTIONS_PER_SECOND,
+                                ENDPOINT_ID,
                                 ["count"],
                                 SlidingWindows(["1s"], "1s"),
                             ),
                             FieldAggregator(
-                                "latency",
-                                "latency",
-                                ["avg"],
-                                SlidingWindows(["1s"], "1s"),
+                                LATENCY, LATENCY, ["avg"], SlidingWindows(["1s"], "1s"),
                             ),
                         ],
                         table=Table("notable", NoopDriver()),
                     ),
-                    SampleWindow(config.get_int("SAMPLE_WINDOW")),
+                    SampleWindow(config.sample_window),
                     # Branch 1.1: Updated KV
                     [
                         Map(self.process_before_kv),
@@ -97,61 +164,55 @@ class EventStreamProcessor:
                         # Map the event into taggable fields, add record type to each field
                         Map(self.process_before_events_tsdb),
                         [
-                            FilterKeys("base_metrics"),
-                            UnpackValues("base_metrics"),
+                            FilterKeys(BASE_METRICS),
+                            UnpackValues(BASE_METRICS),
                             WriteToTSDB(
                                 path=self.tsdb_path,
                                 rate="10/m",
-                                time_col="timestamp",
-                                container=config.get("CONTAINER"),
-                                access_key=config.get("V3IO_ACCESS_KEY"),
-                                v3io_frames=config.get("V3IO_FRAMESD"),
-                                index_cols=["endpoint_id", "record_type"],
+                                time_col=TIMESTAMP,
+                                container=config.container,
+                                access_key=config.v3io_access_key,
+                                v3io_frames=config.v3io_framesd,
+                                index_cols=[ENDPOINT_ID, RECORD_TYPE],
                                 # Settings for _Batching
-                                max_events=config.get_int("TSDB_BATCHING_MAX_EVENTS"),
-                                timeout_secs=config.get_int(
-                                    "TSDB_BATCHING_TIMEOUT_SECS"
-                                ),
-                                key="endpoint_id",
+                                max_events=config.tsdb_batching_max_events,
+                                timeout_secs=config.tsdb_batching_timeout_secs,
+                                key=ENDPOINT_ID,
                             ),
                         ],
                         [
-                            FilterKeys("endpoint_features"),
-                            UnpackValues("endpoint_features"),
+                            FilterKeys(ENDPOINT_FEATURES),
+                            UnpackValues(ENDPOINT_FEATURES),
                             WriteToTSDB(
                                 path=self.tsdb_path,
                                 rate="10/m",
-                                time_col="timestamp",
-                                container=config.get("CONTAINER"),
-                                access_key=config.get("V3IO_ACCESS_KEY"),
-                                v3io_frames=config.get("V3IO_FRAMESD"),
-                                index_cols=["endpoint_id", "record_type"],
+                                time_col=TIMESTAMP,
+                                container=config.container,
+                                access_key=config.v3io_access_key,
+                                v3io_frames=config.v3io_framesd,
+                                index_cols=[ENDPOINT_ID, RECORD_TYPE],
                                 # Settings for _Batching
-                                max_events=config.get_int("TSDB_BATCHING_MAX_EVENTS"),
-                                timeout_secs=config.get_int(
-                                    "TSDB_BATCHING_TIMEOUT_SECS"
-                                ),
-                                key="endpoint_id",
+                                max_events=config.tsdb_batching_max_events,
+                                timeout_secs=config.tsdb_batching_timeout_secs,
+                                key=ENDPOINT_ID,
                             ),
                         ],
                         [
-                            FilterKeys("custom_metrics"),
+                            FilterKeys(CUSTOM_METRICS),
                             FilterNotNone(),
-                            UnpackValues("custom_metrics"),
+                            UnpackValues(CUSTOM_METRICS),
                             WriteToTSDB(
                                 path=self.tsdb_path,
                                 rate="10/m",
-                                time_col="timestamp",
-                                container=config.get("CONTAINER"),
-                                access_key=config.get("V3IO_ACCESS_KEY"),
-                                v3io_frames=config.get("V3IO_FRAMESD"),
-                                index_cols=["endpoint_id", "record_type"],
+                                time_col=TIMESTAMP,
+                                container=config.container,
+                                access_key=config.v3io_access_key,
+                                v3io_frames=config.v3io_framesd,
+                                index_cols=[ENDPOINT_ID, RECORD_TYPE],
                                 # Settings for _Batching
-                                max_events=config.get_int("TSDB_BATCHING_MAX_EVENTS"),
-                                timeout_secs=config.get_int(
-                                    "TSDB_BATCHING_TIMEOUT_SECS"
-                                ),
-                                key="endpoint_id",
+                                max_events=config.tsdb_batching_max_events,
+                                timeout_secs=config.tsdb_batching_timeout_secs,
+                                key=ENDPOINT_ID,
                             ),
                         ],
                     ],
@@ -159,81 +220,93 @@ class EventStreamProcessor:
                 # Branch 2: Batch events, write to parquet
                 [
                     Batch(
-                        max_events=config.get_int("PARQUET_BATCHING_MAX_EVENTS"),
-                        timeout_secs=config.get_int("PARQUET_BATCHING_TIMEOUT_SECS"),
-                        key="endpoint_id",
+                        max_events=config.parquet_batching_max_events,
+                        timeout_secs=config.parquet_batching_timeout_secs,
+                        key=ENDPOINT_ID,
                     ),
-                    FlatMap(lambda batch: _process_before_parquet(batch)),
+                    FlatMap(lambda batch: self.process_before_parquet(batch)),
                     WriteToParquet(
                         path=self.parquet_path,
-                        partition_cols=["endpoint_id", "batch_timestamp"],
+                        partition_cols=[ENDPOINT_ID, "batch_timestamp"],
                         infer_columns_from_data=True,
                         # Settings for _Batching
-                        max_events=config.get_int("PARQUET_BATCHING_MAX_EVENTS"),
-                        timeout_secs=config.get_int("PARQUET_BATCHING_TIMEOUT_SECS"),
-                        key="endpoint_id",
+                        max_events=config.parquet_batching_max_events,
+                        timeout_secs=config.parquet_batching_timeout_secs,
+                        key=ENDPOINT_ID,
                     ),
                 ],
             ]
         ).run()
 
     def consume(self, event: Dict):
-        self._flow.emit(event)
-
-    @staticmethod
-    def unpack_predictions(event: Dict) -> List[Dict]:
-        predictions = []
-        for features, prediction in zip(event["features"], event["prediction"]):
-            predictions.append(dict(event, features=features, prediction=prediction))
-        return predictions
+        if "headers" in event and "values" in event:
+            for values in event["values"]:
+                sub_event = {k: v for k, v in zip(event["headers"], values)}
+                self._flow.emit(sub_event)
+        else:
+            self._flow.emit(event)
 
     def process_before_kv(self, event: Dict):
         # Filter relevant keys
         e = {k: event[k] for k in self._kv_keys}
         # Unpack labels dictionary
-        e = {**e, **e.pop("unpacked_labels", {})}
+        e = {**e, **e.pop(UNPACKED_LABELS, {})}
         # Write labels to kv as json string to be presentable later
-        e["labels"] = json.dumps(e["labels"])
+        e[LABELS] = json.dumps(e[LABELS])
         return e
 
-    def process_before_events_tsdb(self, event: Dict):
-        base_fields = [
-            "timestamp",
-            "endpoint_id",
-        ]
+    @staticmethod
+    def process_before_events_tsdb(event: Dict):
+        base_fields = [TIMESTAMP, ENDPOINT_ID]
 
         base_event = {k: event[k] for k in base_fields}
-        base_event["timestamp"] = pd.to_datetime(
-            base_event["timestamp"], format=config.get("TIME_FORMAT")
+        base_event[TIMESTAMP] = pd.to_datetime(
+            base_event[TIMESTAMP], format=config.time_format
         )
 
         base_metrics = {
-            "record_type": "base_metrics",
-            "predictions_per_second_count_1s": event["predictions_per_second_count_1s"],
-            "latency_avg_1s": event["latency_avg_1s"],
+            RECORD_TYPE: BASE_METRICS,
+            PREDICTIONS_PER_SECOND_COUNT_1S: event[PREDICTIONS_PER_SECOND_COUNT_1S],
+            LATENCY_AVG_1S: event[LATENCY_AVG_1S],
             **base_event,
         }
 
         endpoint_features = {
-            "record_type": "endpoint_features",
-            "prediction": event["prediction"],
-            **event["named_features"],
+            RECORD_TYPE: ENDPOINT_FEATURES,
+            PREDICTION: event[PREDICTION],
+            **event[NAMED_FEATURES],
             **base_event,
         }
 
-        processed = {
-            "base_metrics": base_metrics,
-            "endpoint_features": endpoint_features,
-        }
+        processed = {BASE_METRICS: base_metrics, ENDPOINT_FEATURES: endpoint_features}
 
-        if event["metrics"]:
-            processed["custom_metrics"] = {
-                "record_type": "custom_metrics",
-                **event["metrics"],
+        if event[METRICS]:
+            processed[CUSTOM_METRICS] = {
+                RECORD_TYPE: CUSTOM_METRICS,
+                **event[METRICS],
                 **base_event,
             }
 
         return processed
+
+    @staticmethod
+    def process_before_parquet(batch: List[dict]):
+        def set_none_if_empty(_event: dict, keys: List[str]):
+            for key in keys:
+                if not _event.get(key):
+                    _event[key] = None
+
+        def drop_if_exists(_event: dict, keys: List[str]):
+            for key in keys:
+                _event.pop(key, None)
+
+        if batch:
+            last_event = batch[-1][TIMESTAMP]
+            for event in batch:
+                event[BATCH_TIMESTAMP] = last_event
+                drop_if_exists(event, [UNPACKED_LABELS])
+                set_none_if_empty(event, [LABELS, METRICS, ENTITIES])
+        return batch
 
 
 class ProcessEndpointEvent(MapClass):
@@ -246,15 +319,15 @@ class ProcessEndpointEvent(MapClass):
         self.endpoints: Set[str] = set()
 
     def do(self, event: dict):
-        function_uri = event.get("function_uri")
-        if not self.validate_input(function_uri, ["function_uri"]):
+        function_uri = event.get(FUNCTION_URI)
+        if not self.validate_input(function_uri, [FUNCTION_URI]):
             return None
 
-        model = event.get("model")
-        if not self.validate_input(model, ["model"]):
+        model = event.get(MODEL)
+        if not self.validate_input(model, [MODEL]):
             return None
 
-        version = event.get("version")
+        version = event.get(VERSION)
         versioned_model = f"{model}_{version}" if version else model
 
         endpoint_id = ModelEndpoint.create_endpoint_id(
@@ -295,22 +368,22 @@ class ProcessEndpointEvent(MapClass):
             return None
 
         event = {
-            "function_uri": function_uri,
-            "model": model,
-            "model_class": model_class,
-            "timestamp": timestamp,
-            "endpoint_id": endpoint_id,
-            "request_id": request_id,
-            "latency": latency,
-            "features": features,
-            "prediction": prediction,
-            "first_request": self.first_request[endpoint_id],
-            "last_request": self.last_request[endpoint_id],
-            "error_count": self.error_count[endpoint_id],
-            "labels": event.get("labels", {}),
-            "metrics": event.get("metrics", {}),
-            "entities": event.get("request", {}).get("entities", {}),
-            "unpacked_labels": {f"_{k}": v for k, v in event.get("labels", {}).items()},
+            FUNCTION_URI: function_uri,
+            MODEL: model,
+            MODEL_CLASS: model_class,
+            TIMESTAMP: timestamp,
+            ENDPOINT_ID: endpoint_id,
+            REQUEST_ID: request_id,
+            LATENCY: latency,
+            FEATURES: features,
+            PREDICTION: prediction,
+            FIRST_REQUEST: self.first_request[endpoint_id],
+            LAST_REQUEST: self.last_request[endpoint_id],
+            ERROR_COUNT: self.error_count[endpoint_id],
+            LABELS: event.get(LABELS, {}),
+            METRICS: event.get(METRICS, {}),
+            ENTITIES: event.get("request", {}).get(ENTITIES, {}),
+            UNPACKED_LABELS: {f"_{k}": v for k, v in event.get(LABELS, {}).items()},
         }
 
         return event
@@ -324,10 +397,10 @@ class ProcessEndpointEvent(MapClass):
                 path=self.kv_path, endpoint_id=endpoint_id,
             )
             if endpoint_record:
-                first_request = endpoint_record.get("first_request")
+                first_request = endpoint_record.get(FIRST_REQUEST)
                 if first_request:
                     self.first_request[endpoint_id] = first_request
-                error_count = endpoint_record.get("error_count")
+                error_count = endpoint_record.get(ERROR_COUNT)
                 if error_count:
                     self.error_count[endpoint_id] = error_count
             self.endpoints.add(endpoint_id)
@@ -356,7 +429,7 @@ class FlattenPredictions(FlatMap):
     @staticmethod
     def flatten(event: Dict):
         predictions = []
-        for features, prediction in zip(event["features"], event["prediction"]):
+        for features, prediction in zip(event[FEATURES], event[PREDICTION]):
             predictions.append(dict(event, features=features, prediction=prediction))
         return predictions
 
@@ -402,33 +475,33 @@ class MapFeatureNames(MapClass):
         self.feature_names = {}
 
     def do(self, event: Dict):
-        endpoint_id = event["endpoint_id"]
+        endpoint_id = event[ENDPOINT_ID]
 
         if endpoint_id not in self.feature_names:
             endpoint_record = get_endpoint_record(
                 path=self.kv_path, endpoint_id=endpoint_id,
             )
-            feature_names = endpoint_record.get("feature_names")
+            feature_names = endpoint_record.get(FEATURE_NAMES)
             feature_names = json.loads(feature_names) if feature_names else None
 
             if not feature_names:
                 logger.warn(
-                    f"Seems like endpoint {event['endpoint_id']} was not registered, feature names will be "
+                    f"Seems like endpoint {event[ENDPOINT_ID]} was not registered, feature names will be "
                     f"automatically generated"
                 )
-                feature_names = [f"f{i}" for i, _ in enumerate(event["features"])]
+                feature_names = [f"f{i}" for i, _ in enumerate(event[FEATURES])]
                 get_v3io_client().kv.update(
-                    container=config.get("CONTAINER"),
+                    container=config.container,
                     table_path=self.kv_path,
-                    key=event["endpoint_id"],
-                    attributes={"feature_names": json.dumps(feature_names)},
+                    key=event[ENDPOINT_ID],
+                    attributes={FEATURE_NAMES: json.dumps(feature_names)},
                 )
 
             self.feature_names[endpoint_id] = feature_names
 
         feature_names = self.feature_names[endpoint_id]
-        features = event["features"]
-        event["named_features"] = {
+        features = event[FEATURES]
+        event[NAMED_FEATURES] = {
             name: feature for name, feature in zip(feature_names, features)
         }
         return event
@@ -441,9 +514,9 @@ class WriteToKV(MapClass):
 
     def do(self, event: Dict):
         get_v3io_client().kv.update(
-            container=config.get("CONTAINER"),
+            container=config.container,
             table_path=self.table,
-            key=event["endpoint_id"],
+            key=event[ENDPOINT_ID],
             attributes=event,
         )
         return event
@@ -460,30 +533,11 @@ class InferSchema(MapClass):
         if not key_set.issubset(self.keys):
             self.keys.update(key_set)
             get_frames_client(
-                token=config.get("V3IO_ACCESS_KEY"),
-                container=config.get("CONTAINER"),
-                address=config.get("V3IO_FRAMESD"),
+                token=config.v3io_access_key,
+                container=config.container,
+                address=config.v3io_framesd,
             ).execute(backend="kv", table=self.table, command="infer_schema")
         return event
-
-
-def _process_before_parquet(batch: List[dict]):
-    def set_none_if_empty(_event: dict, keys: List[str]):
-        for key in keys:
-            if not _event.get(key):
-                _event[key] = None
-
-    def drop_if_exists(_event: dict, keys: List[str]):
-        for key in keys:
-            _event.pop(key, None)
-
-    if batch:
-        last_event = batch[-1]["timestamp"]
-        for event in batch:
-            event["batch_timestamp"] = last_event
-            drop_if_exists(event, ["unpacked_labels"])
-            set_none_if_empty(event, ["labels", "metrics", "entities"])
-    return batch
 
 
 def get_endpoint_record(path: str, endpoint_id: str) -> Optional[dict]:
@@ -493,9 +547,7 @@ def get_endpoint_record(path: str, endpoint_id: str) -> Optional[dict]:
     try:
         endpoint_record = (
             get_v3io_client()
-            .kv.get(
-                container=config.get("CONTAINER"), table_path=path, key=endpoint_id,
-            )
+            .kv.get(container=config.container, table_path=path, key=endpoint_id,)
             .output.item
         )
         return endpoint_record
